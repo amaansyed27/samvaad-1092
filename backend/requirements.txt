@@ -21,6 +21,13 @@ google-genai==1.14.*
 groq==0.25.*
 httpx==0.28.*
 
+# ── Sarvam AI (Indian DPI — STT + TTS) ──────────────────────────────────────
+aiofiles==24.1.*
+
+# ── Database (Learning Signals) ──────────────────────────────────────────────
+sqlalchemy[asyncio]==2.0.*
+aiosqlite==0.21.*
+
 # ── PII & Regex ──────────────────────────────────────────────────────────────
 regex==2024.11.*
 
