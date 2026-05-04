@@ -10,6 +10,9 @@ Endpoints:
     GET /api/health         — Liveness probe
     GET /api/sessions       — List active sessions (operator use)
     GET /api/session/{id}   — Get session details
+    GET /api/history        — Call history from database
+    GET /api/learning       — Learning signals (verified pairs)
+    POST /api/agent-edit    — Save agent corrections
 """
 
 from __future__ import annotations
@@ -39,6 +42,12 @@ async def lifespan(app: FastAPI):
     logger.info("║   SAMVAAD 1092 — Starting Up             ║")
     logger.info("║   Karnataka 1092 Helpline AI Layer        ║")
     logger.info("╚══════════════════════════════════════════╝")
+
+    # Initialise database
+    from app.core.database import init_db
+    await init_db()
+    logger.info("Database ready")
+
     yield
     logger.info("Samvaad 1092 shutting down")
 
@@ -51,7 +60,7 @@ app = FastAPI(
         "Helpline. Processes multilingual, dialect-rich, emotionally charged "
         "speech through a Verified Understanding pipeline."
     ),
-    version="0.1.0",
+    version="0.2.0",
     lifespan=lifespan,
 )
 
@@ -72,7 +81,7 @@ app.add_middleware(
 @app.get("/api/health")
 async def health():
     """Liveness probe for load balancers and monitoring."""
-    return {"status": "ok", "service": "samvaad-1092"}
+    return {"status": "ok", "service": "samvaad-1092", "version": "0.2.0"}
 
 
 @app.get("/api/sessions")
@@ -104,6 +113,35 @@ async def get_session(call_id: str):
     if session is None:
         return {"error": "Session not found"}, 404
     return session.model_dump()
+
+
+@app.get("/api/history")
+async def call_history(limit: int = 50):
+    """Get historical call records from the database."""
+    from app.core.database import get_call_history
+    records = await get_call_history(limit=limit)
+    return {"count": len(records), "records": records}
+
+
+@app.get("/api/learning")
+async def learning_signals(limit: int = 100):
+    """Get verified learning signal pairs for continuous improvement."""
+    from app.core.database import get_learning_signals
+    signals = await get_learning_signals(limit=limit)
+    return {"count": len(signals), "signals": signals}
+
+
+@app.post("/api/agent-edit")
+async def save_agent_edit(payload: dict):
+    """Save agent corrections for a call (learning signal)."""
+    call_id = payload.get("call_id", "")
+    corrections = payload.get("corrections", {})
+    if not call_id or not corrections:
+        return {"error": "call_id and corrections required"}, 400
+
+    from app.core.database import save_agent_edit as db_save
+    success = await db_save(call_id, corrections)
+    return {"success": success, "call_id": call_id}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
