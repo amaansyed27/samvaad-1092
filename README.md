@@ -16,6 +16,7 @@ Detailed documentation has been separated into the following modules to help you
 - [**Working Mechanism**](docs/working.md): Step-by-step pipeline from voice input to database persistence.
 - [**Tech Stack**](docs/tech_stack.md): Detailed breakdown of the frameworks, APIs, and models used.
 - [**Theory & Philosophy**](docs/theory.md): The core design philosophies (Sovereign Privacy, Acoustic Superiority, Agent-in-the-Loop).
+- [**Testing Guide**](docs/testing_guide.md): Step-by-step scenarios to verify hackathon requirements.
 
 ---
 
