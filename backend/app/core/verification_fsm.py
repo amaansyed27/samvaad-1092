@@ -229,7 +229,7 @@ class VerificationEngine:
                 system_prompt=_SENTIMENT_PROMPT,
                 user_message=transcript,
                 purpose="sentiment",
-                providers=["groq", "gemini"],
+                providers=["groq", "openrouter", "gemini", "or-hy3", "or-oss-120b", "or-nano", "deepseek"],
                 max_tokens=256,
             )
             sentiment_data = _safe_json_parse(sentiment_text)
@@ -246,7 +246,7 @@ class VerificationEngine:
                 system_prompt=_ANALYSIS_PROMPT,
                 user_message=transcript,
                 purpose="analysis",
-                providers=["deepseek", "gemini", "groq"],
+                providers=["groq", "openrouter", "gemini", "or-hy3", "or-oss-120b", "or-nano", "deepseek"],
                 max_tokens=1024,
             )
             analysis_data = _safe_json_parse(analysis_text)
@@ -294,7 +294,7 @@ class VerificationEngine:
                 system_prompt=_RESTATE_PROMPT,
                 user_message=restate_input,
                 purpose="restatement",
-                providers=["gemini", "groq"],
+                providers=["groq", "openrouter", "gemini", "or-hy3", "or-oss-120b", "or-nano", "deepseek"],
                 max_tokens=256,
             )
             session.restated_summary = restatement.strip()

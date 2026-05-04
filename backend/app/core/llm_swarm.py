@@ -176,13 +176,34 @@ class DeepSeekProvider(SovereignProvider):
             timeout=30.0,
         )
 
+    async def generate(
+        self,
+        system_prompt: str,
+        user_message: str,
+        *,
+        temperature: float = 0.3,
+        max_tokens: int = 1024,
+    ) -> str:
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message},
+            ],
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
+        resp = await self._http.post("/chat/completions", json=payload)
+        resp.raise_for_status()
+        return resp.json()["choices"][0]["message"]["content"]
+
 class OpenRouterProvider(SovereignProvider):
     """OpenRouter — fallback for diverse model access."""
 
     name = "openrouter"
 
-    def __init__(self) -> None:
-        self.model = settings.openrouter_model
+    def __init__(self, model_override: str | None = None) -> None:
+        self.model = model_override or settings.openrouter_model
         self._http = httpx.AsyncClient(
             base_url="https://openrouter.ai/api/v1",
             headers={
@@ -245,6 +266,10 @@ class ProviderFactory:
             self._providers["gemini"] = GeminiProvider()
         if settings.openrouter_api_key:
             self._providers["openrouter"] = OpenRouterProvider()
+            # Redundant OpenRouter instances
+            self._providers["or-hy3"] = OpenRouterProvider("tencent/hy3-preview:free")
+            self._providers["or-oss-120b"] = OpenRouterProvider("openai/gpt-oss-120b:free")
+            self._providers["or-nano"] = OpenRouterProvider("nvidia/nemotron-3-nano-30b-a3b:free")
         if settings.deepseek_api_key:
             self._providers["deepseek"] = DeepSeekProvider()
         logger.info(
