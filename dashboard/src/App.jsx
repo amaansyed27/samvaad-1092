@@ -21,7 +21,7 @@ import SimulatorPanel from './components/SimulatorPanel';
  *   ├────────────┼────────────────────┼────────────────┤
  *   │            │                    │                │
  *   │ Transcript │   Analysis Card    │  Simulator     │
- *   │   Panel    │                    │   Panel        │
+ *   │   Panel    │   (Editable)       │   Panel        │
  *   │            │                    │                │
  *   └────────────┴────────────────────┴────────────────┘
  */
@@ -34,10 +34,16 @@ export default function App() {
     distress,
     analysis,
     restatement,
+    ttsAudio,
     confidence,
     piiCount,
+    liveTranscript,
+    languageCode,
     sendTranscript,
     sendConfirm,
+    sendAudio,
+    sendTakeover,
+    sendAgentEdit,
   } = useCallSocket();
 
   return (
@@ -65,6 +71,16 @@ export default function App() {
             <div className="status-badge ml-4" style={{ background: 'var(--color-glass)', border: '1px solid var(--color-glass-border)' }}>
               <span className="text-[var(--color-text-muted)]">Call</span>
               <span className="font-mono text-[var(--color-text-secondary)]">{callId}</span>
+            </div>
+          )}
+
+          {/* Language badge */}
+          {languageCode && languageCode !== 'unknown' && (
+            <div className="status-badge" style={{
+              background: 'rgba(139, 92, 246, 0.08)',
+              border: '1px solid rgba(139, 92, 246, 0.15)',
+            }}>
+              <span className="text-[var(--color-analyzing)]">🌐 {languageCode}</span>
             </div>
           )}
         </div>
@@ -150,20 +166,25 @@ export default function App() {
           {/* Transcript */}
           <TranscriptPanel events={events} piiCount={piiCount} />
 
-          {/* Analysis */}
+          {/* Analysis (Editable) */}
           <AnalysisCard
             analysis={analysis}
             sentiment={events.find(e => e.sentiment)?.sentiment}
-            language={events.find(e => e.state === 'ANALYZE')?.language}
+            language={events.find(e => e.state === 'ANALYZE')?.language || languageCode}
+            onAgentEdit={sendAgentEdit}
           />
 
-          {/* Simulator */}
+          {/* Simulator / Mic / Controls */}
           <SimulatorPanel
             onSendTranscript={sendTranscript}
             onSendConfirm={sendConfirm}
+            onSendAudio={sendAudio}
+            onSendTakeover={sendTakeover}
             state={state}
             restatement={restatement}
+            ttsAudio={ttsAudio}
             connected={connected}
+            languageCode={languageCode}
           />
         </div>
       </main>
@@ -171,11 +192,16 @@ export default function App() {
       {/* ── Footer ─────────────────────────────────────────────────────── */}
       <footer className="px-6 py-2 border-t border-[var(--color-glass-border)] flex items-center justify-between">
         <span className="text-[10px] text-[var(--color-text-muted)]">
-          Samvaad 1092 • AI for Bharat 2 • v0.1.0
+          Samvaad 1092 • AI for Bharat 2 • v0.2.0
         </span>
-        <span className="text-[10px] text-[var(--color-text-muted)]">
-          🛡 PII scrubbed locally — no raw data leaves this device
-        </span>
+        <div className="flex items-center gap-4">
+          <span className="text-[10px] text-[var(--color-text-muted)]">
+            🛡 PII scrubbed locally — no raw data leaves this device
+          </span>
+          <span className="text-[10px] text-[var(--color-text-muted)]">
+            🎙 Sarvam Saaras V3 • 🔊 Bulbul V3
+          </span>
+        </div>
       </footer>
     </div>
   );
