@@ -69,7 +69,7 @@ Before any data touches a third-party LLM, it must pass through:
 A fault-tolerant routing engine that guarantees uptime and speed. Instead of relying on a single provider, the system cascades through:
 1. **Groq (Llama 3 8B)**: Used for ultra-fast (sub-200ms) sentiment analysis.
 2. **OpenRouter (Nemotron 120B / DeepSeek)**: Heavy-duty reasoning for emergency classification and cultural context.
-3. **Gemini 1.5 Flash**: Fast multimodal fallback.
+3. **Gemini 3 Flash**: Fast multimodal fallback.
 
 ### 4. Persistence & Learning Signals
 An asynchronous SQLite database (`aiosqlite`) captures the full lifecycle of a call. Crucially, when human operators manually edit an AI's analysis via the Dashboard, these corrections are saved as "Learning Signals" to improve future model fine-tuning.
