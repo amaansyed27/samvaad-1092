@@ -18,9 +18,9 @@ Karnataka's 1092 helpline handles domestic violence, elder abuse, and child dist
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                        OPERATOR DASHBOARD                          │
-│  React + Vite + Tailwind  │  Monochrome Glassmorphism              │
-│  [Transcript] [Distress Gauge] [Confidence Gauge] [State Timeline] │
+│                        OPERATOR DASHBOARD                           │
+│  React + Vite + Tailwind  │  Monochrome Glassmorphism               │
+│  [Transcript] [Distress Gauge] [Confidence Gauge] [State Timeline]  │
 └──────────────────────────┬──────────────────────────────────────────┘
                            │ WebSocket (JSON frames)
                            ▼
@@ -29,23 +29,23 @@ Karnataka's 1092 helpline handles domestic violence, elder abuse, and child dist
 │                      (Python 3.12 + async)                          │
 ├─────────────────────────────────────────────────────────────────────┤
 │                                                                     │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────────┐  │
-│  │   ACOUSTIC   │  │     PII      │  │    VERIFICATION STATE    │  │
-│  │   GUARDIAN    │  │   SCRUBBER   │  │        MACHINE           │  │
-│  │              │  │              │  │                          │  │
-│  │  librosa +   │  │  Regex +     │  │ INIT → LISTEN → SCRUB → │  │
-│  │  Wav2Vec2    │  │  IndicNER    │  │ ANALYZE → RESTATE →     │  │
-│  │  (on-device) │  │  (on-device) │  │ CONFIRM → VERIFIED      │  │
-│  └──────┬───────┘  └──────┬───────┘  └──────────┬───────────────┘  │
-│         │                 │                      │                  │
-│         ▼                 ▼                      ▼                  │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────────┐   │
+│  │   ACOUSTIC   │  │     PII      │  │    VERIFICATION STATE    │   │
+│  │   GUARDIAN   │  │   SCRUBBER   │  │        MACHINE           │   │
+│  │              │  │              │  │                          │   │
+│  │  librosa +   │  │  Regex +     │  │ INIT → LISTEN → SCRUB →  │   │
+│  │  Wav2Vec2    │  │  IndicNER    │  │ ANALYZE → RESTATE →      │   │
+│  │  (on-device) │  │  (on-device) │  │ CONFIRM → VERIFIED       │   │
+│  └──────┬───────┘  └──────┬───────┘  └──────────┬───────────────┘   │
+│         │                 │                     │                   │
+│         ▼                 ▼                     ▼                   │
 │  ┌──────────────────────────────────────────────────────────────┐   │
 │  │              MODEL-AGNOSTIC LLM SWARM                        │   │
-│  │  ┌────────┐    ┌────────────┐    ┌─────────────────┐        │   │
-│  │  │  Groq  │ →  │  Gemini 3  │ →  │  DeepSeek       │        │   │
-│  │  │ <500ms │    │   Flash    │    │  (OpenRouter)   │        │   │
-│  │  │  fast  │    │  balanced  │    │  deep dialect   │        │   │
-│  │  └────────┘    └────────────┘    └─────────────────┘        │   │
+│  │  ┌────────┐    ┌────────────┐    ┌─────────────────┐         │   │
+│  │  │  Groq  │ →  │  Gemini 3  │ →  │  DeepSeek       │         │   │
+│  │  │ <500ms │    │   Flash    │    │  (OpenRouter)   │         │   │
+│  │  │  fast  │    │  balanced  │    │  deep dialect   │         │   │
+│  │  └────────┘    └────────────┘    └─────────────────┘         │   │
 │  └──────────────────────────────────────────────────────────────┘   │
 │                                                                     │
 │  🔒 SECURITY: No raw PII ever leaves the device.                    │
