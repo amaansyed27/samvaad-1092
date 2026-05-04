@@ -27,11 +27,13 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     groq_api_key: str = ""
     openrouter_api_key: str = ""
+    deepseek_api_key: str = ""
 
     # ── Provider Models ──────────────────────────────────────────────────
     gemini_model: str = "gemini-3-flash"
     groq_model: str = "llama-3.3-70b-versatile"
-    deepseek_model: str = "deepseek/deepseek-chat-v3"
+    openrouter_model: str = "nvidia/nemotron-3-super-120b-a12b:free"
+    deepseek_model: str = "deepseek-v4-flash"
 
     # ── Server ───────────────────────────────────────────────────────────
     host: str = "0.0.0.0"

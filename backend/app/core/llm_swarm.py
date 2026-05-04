@@ -162,12 +162,27 @@ class GroqProvider(SovereignProvider):
 
 
 class DeepSeekProvider(SovereignProvider):
-    """DeepSeek via OpenRouter — deep dialect & cultural nuance parsing."""
+    """DeepSeek direct API — deep dialect & cultural nuance parsing."""
 
     name = "deepseek"
 
     def __init__(self) -> None:
         self.model = settings.deepseek_model
+        self._http = httpx.AsyncClient(
+            base_url="https://api.deepseek.com",
+            headers={
+                "Authorization": f"Bearer {settings.deepseek_api_key}",
+            },
+            timeout=30.0,
+        )
+
+class OpenRouterProvider(SovereignProvider):
+    """OpenRouter — fallback for diverse model access."""
+
+    name = "openrouter"
+
+    def __init__(self) -> None:
+        self.model = settings.openrouter_model
         self._http = httpx.AsyncClient(
             base_url="https://openrouter.ai/api/v1",
             headers={
@@ -229,6 +244,8 @@ class ProviderFactory:
         if settings.gemini_api_key:
             self._providers["gemini"] = GeminiProvider()
         if settings.openrouter_api_key:
+            self._providers["openrouter"] = OpenRouterProvider()
+        if settings.deepseek_api_key:
             self._providers["deepseek"] = DeepSeekProvider()
         logger.info(
             "ProviderFactory initialised with: %s",
