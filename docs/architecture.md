@@ -63,7 +63,7 @@ At any point, if confidence drops, the FSM instantly breaks to the `HUMAN_TAKEOV
 ### 2. Local Sovereignty & ML Layer
 Before any data touches a heavy third-party LLM, it must pass through:
 - **Acoustic Guardian**: Runs entirely on the backend server. Analyzes audio frequencies to detect distress, passing an acoustic score to the LLM to prevent false positives from bad phone mics.
-- **Fast ML Department Routing**: A localized Scikit-Learn Naive Bayes model instantly classifies the civic complaint (e.g. BESCOM, BWSSB) in milliseconds.
+- **Fast ML Department Routing**: A localized Scikit-Learn Naive Bayes model instantly classifies the civic complaint (e.g. BESCOM, BWSSB) in milliseconds. See [ML Models](ml_models.md) for details on the Active Learning integration.
 - **PII Scrubber**: Uses local Regex and NER (Named Entity Recognition) to redact sensitive citizen data (Aadhaar, phone numbers, names).
 
 ### 3. LLM Swarm Cascade

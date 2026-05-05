@@ -15,6 +15,7 @@ Detailed documentation has been separated into the following modules:
 - [**Architecture**](docs/architecture.md): High-level system architecture, FSM, and Swarm Intelligence.
 - [**Working Mechanism**](docs/working.md): Step-by-step pipeline from voice input to database persistence.
 - [**Tech Stack**](docs/tech_stack.md): Detailed breakdown of the frameworks, APIs, and models used.
+- [**Machine Learning & AI**](docs/ml_models.md): Deep dive into the Active Learning loop, the Scikit-Learn routing, and the Acoustic Guardian.
 - [**Theory & Philosophy**](docs/theory.md): The core design philosophies (Sovereign Privacy, Acoustic Superiority, Agent-in-the-Loop).
 - [**Testing Guide**](docs/testing_guide.md): Step-by-step scenarios to verify hackathon requirements.
 
@@ -39,7 +40,8 @@ python -m venv .venv
 pip install -r requirements.txt
 
 # Seed the database with historical grievances for the dashboard
-python scripts/seed_db.py
+# (Uses robust synthetic data with noise and correlations)
+python scripts/demo_data_seeder.py
 
 # Start the FastAPI server (starts on port 8000)
 python -m app.main
