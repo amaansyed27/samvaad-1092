@@ -49,6 +49,9 @@ class CallRecord(Base):
 
     # Analysis
     emergency_type = Column(String(50), default="")
+    department_assigned = Column(String(50), default="UNASSIGNED")
+    resolution_status = Column(String(20), default="PENDING")
+    priority = Column(String(20), default="LOW")
     severity = Column(String(20), default="")
     sentiment = Column(String(30), default="")
     location_hint = Column(Text, default="")
@@ -110,33 +113,45 @@ def get_session() -> AsyncSession:
 
 async def save_call_record(session_data: dict[str, Any]) -> CallRecord:
     """Persist a completed call session to the database."""
-    record = CallRecord(
-        call_id=session_data.get("call_id", ""),
-        state=session_data.get("state", ""),
-        language_detected=session_data.get("language_detected", "unknown"),
-        raw_transcript=session_data.get("raw_transcript", ""),
-        scrubbed_transcript=session_data.get("scrubbed_transcript", ""),
-        restated_summary=session_data.get("restated_summary", ""),
-        emergency_type=session_data.get("emergency_type", ""),
-        severity=session_data.get("severity", ""),
-        sentiment=session_data.get("sentiment", ""),
-        location_hint=session_data.get("location_hint", ""),
-        cultural_context=session_data.get("cultural_context", ""),
-        key_details=session_data.get("key_details", []),
-        confidence=session_data.get("confidence", 0.0),
-        distress_score=session_data.get("distress_score", 0.0),
-        distress_level=session_data.get("distress_level", "LOW"),
-        caller_confirmed=session_data.get("caller_confirmed"),
-        agent_edited=session_data.get("agent_edited", False),
-        agent_corrections=session_data.get("agent_corrections", {}),
-        cascade_log=session_data.get("cascade_log", []),
-        pii_entities_count=session_data.get("pii_entities_count", 0),
-        started_at=session_data.get("started_at", datetime.now(timezone.utc)),
-        completed_at=datetime.now(timezone.utc),
-    )
-
     async with get_session() as db:
-        db.add(record)
+        from sqlalchemy import select
+        call_id = session_data.get("call_id", "")
+        stmt = select(CallRecord).where(CallRecord.call_id == call_id)
+        result = await db.execute(stmt)
+        record = result.scalar_one_or_none()
+
+        if not record:
+            record = CallRecord(call_id=call_id)
+            db.add(record)
+        
+        record.state = session_data.get("state", record.state)
+        record.language_detected = session_data.get("language_detected", record.language_detected)
+        record.raw_transcript = session_data.get("raw_transcript", record.raw_transcript)
+        record.scrubbed_transcript = session_data.get("scrubbed_transcript", record.scrubbed_transcript)
+        record.restated_summary = session_data.get("restated_summary", record.restated_summary)
+        record.emergency_type = session_data.get("emergency_type", record.emergency_type)
+        record.department_assigned = session_data.get("department_assigned", record.department_assigned)
+        record.resolution_status = session_data.get("resolution_status", record.resolution_status)
+        record.priority = session_data.get("priority", record.priority)
+        record.severity = session_data.get("severity", record.severity)
+        record.sentiment = session_data.get("sentiment", record.sentiment)
+        record.location_hint = session_data.get("location_hint", record.location_hint)
+        record.cultural_context = session_data.get("cultural_context", record.cultural_context)
+        record.key_details = session_data.get("key_details", record.key_details)
+        record.confidence = session_data.get("confidence", record.confidence)
+        record.distress_score = session_data.get("distress_score", record.distress_score)
+        record.distress_level = session_data.get("distress_level", record.distress_level)
+        if session_data.get("caller_confirmed") is not None:
+            record.caller_confirmed = session_data.get("caller_confirmed")
+        record.agent_edited = session_data.get("agent_edited", record.agent_edited)
+        record.agent_corrections = session_data.get("agent_corrections", record.agent_corrections)
+        record.cascade_log = session_data.get("cascade_log", record.cascade_log)
+        record.pii_entities_count = session_data.get("pii_entities_count", record.pii_entities_count)
+        
+        if not record.id:
+            record.started_at = session_data.get("started_at", datetime.now(timezone.utc))
+        record.completed_at = datetime.now(timezone.utc)
+
         await db.commit()
         await db.refresh(record)
 
@@ -181,8 +196,13 @@ async def get_call_history(limit: int = 50) -> list[dict]:
                 "state": r.state,
                 "language": r.language_detected,
                 "emergency_type": r.emergency_type,
+                "department_assigned": r.department_assigned,
+                "resolution_status": r.resolution_status,
+                "priority": r.priority,
                 "severity": r.severity,
                 "sentiment": r.sentiment,
+                "raw_transcript": r.raw_transcript,
+                "restated_summary": r.restated_summary,
                 "confidence": r.confidence,
                 "distress_score": r.distress_score,
                 "caller_confirmed": r.caller_confirmed,
@@ -226,3 +246,45 @@ async def get_learning_signals(limit: int = 100) -> list[dict]:
             }
             for r in records
         ]
+
+async def resolve_grievance(call_id: str) -> bool:
+    async with get_session() as db:
+        from sqlalchemy import select
+        stmt = select(CallRecord).where(CallRecord.call_id == call_id)
+        result = await db.execute(stmt)
+        record = result.scalar_one_or_none()
+        if not record:
+            return False
+        record.resolution_status = "RESOLVED"
+        await db.commit()
+        return True
+
+async def get_analytics_overview() -> dict:
+    async with get_session() as db:
+        from sqlalchemy import select, func
+        
+        # total calls
+        total_stmt = select(func.count(CallRecord.id))
+        total_calls = (await db.execute(total_stmt)).scalar() or 0
+        
+        # resolved
+        resolved_stmt = select(func.count(CallRecord.id)).where(CallRecord.resolution_status == "RESOLVED")
+        resolved_calls = (await db.execute(resolved_stmt)).scalar() or 0
+        
+        # By department
+        dept_stmt = select(CallRecord.department_assigned, func.count(CallRecord.id)).group_by(CallRecord.department_assigned)
+        dept_result = await db.execute(dept_stmt)
+        departments = [{"name": row[0], "count": row[1]} for row in dept_result.all()]
+        
+        # By status
+        status_stmt = select(CallRecord.resolution_status, func.count(CallRecord.id)).group_by(CallRecord.resolution_status)
+        status_result = await db.execute(status_stmt)
+        statuses = [{"name": row[0], "count": row[1]} for row in status_result.all()]
+        
+        return {
+            "total_calls": total_calls,
+            "resolved_calls": resolved_calls,
+            "resolution_rate": round(resolved_calls / total_calls * 100) if total_calls > 0 else 0,
+            "departments": departments,
+            "statuses": statuses
+        }

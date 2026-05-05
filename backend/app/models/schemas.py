@@ -1,0 +1,126 @@
+"""
+Samvaad 1092 — Domain Models
+==============================
+Pydantic v2 models shared across all subsystems. These are the canonical
+"language" of the application — every WebSocket frame, every internal event,
+and every dashboard payload is typed through these schemas.
+"""
+
+from __future__ import annotations
+
+import enum
+import uuid
+from datetime import datetime, timezone
+from typing import Any
+
+from pydantic import BaseModel, Field
+
+
+# ── Verification State Machine States ────────────────────────────────────────
+class VerificationState(str, enum.Enum):
+    """
+    The 1092 Verification Loop lifecycle.
+
+    Flow:
+        INIT → LISTEN → SCRUB → ANALYZE → RESTATE →
+        WAIT_FOR_CONFIRM → VERIFIED
+                                ↓ (rejected / low confidence)
+                        HUMAN_TAKEOVER
+    """
+
+    INIT = "INIT"
+    LISTEN = "LISTEN"
+    SCRUB = "SCRUB"
+    ANALYZE = "ANALYZE"
+    RESTATE = "RESTATE"
+    WAIT_FOR_CONFIRM = "WAIT_FOR_CONFIRM"
+    VERIFIED = "VERIFIED"
+    HUMAN_TAKEOVER = "HUMAN_TAKEOVER"
+
+
+# ── Distress Level ───────────────────────────────────────────────────────────
+class DistressLevel(str, enum.Enum):
+    LOW = "LOW"
+    MODERATE = "MODERATE"
+    HIGH = "HIGH"
+    CRITICAL = "CRITICAL"  # triggers SAFE_HUMAN_TAKEOVER
+
+
+# ── Call Session ─────────────────────────────────────────────────────────────
+class CallSession(BaseModel):
+    """Root aggregate for one active 1092 call."""
+
+    call_id: str = Field(default_factory=lambda: uuid.uuid4().hex[:12])
+    state: VerificationState = VerificationState.INIT
+    language_detected: str = "unknown"
+    raw_transcript: str = ""
+    scrubbed_transcript: str = ""
+    restated_summary: str = ""
+    caller_confirmed: bool | None = None
+    distress_score: float = 0.0
+    distress_level: DistressLevel = DistressLevel.LOW
+    sentiment: str = ""
+    confidence: float = 0.0
+    department_assigned: str = "UNASSIGNED"
+    resolution_status: str = "PENDING"
+    priority: str = "LOW"
+    started_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    pii_entities_found: list[PIIEntity] = Field(default_factory=list)
+    analysis_result: AnalysisResult | None = None
+    cascade_log: list[CascadeEntry] = Field(default_factory=list)
+
+    model_config = {"use_enum_values": True}
+
+
+# ── PII Entity ───────────────────────────────────────────────────────────────
+class PIIEntity(BaseModel):
+    """A single PII span detected during the SCRUB phase."""
+
+    entity_type: str  # AADHAAR, PHONE, NAME, ADDRESS, etc.
+    original: str
+    replacement: str  # e.g. "[AADHAAR_REDACTED]"
+    start: int
+    end: int
+
+
+# ── Analysis Result ──────────────────────────────────────────────────────────
+class AnalysisResult(BaseModel):
+    """Output of the LLM ANALYZE phase."""
+
+    emergency_type: str | None = None
+    department: str | None = None
+    location_hint: str | None = None
+    severity: str | None = None
+    priority: str | None = None
+    sentiment: str | None = None
+    key_details: list[str] = Field(default_factory=list)
+    cultural_context: str | None = None
+    semantic_distress_score: float = 0.0
+    requires_immediate_takeover: bool = False
+    confidence: float = 0.0
+
+
+# ── Cascade Entry ────────────────────────────────────────────────────────────
+class CascadeEntry(BaseModel):
+    """Log entry for every LLM call in the cascade."""
+
+    provider: str
+    model: str
+    purpose: str  # "sentiment" | "analysis" | "restatement"
+    latency_ms: float
+    success: bool
+    error: str | None = None
+
+
+# ── WebSocket Event Payloads ────────────────────────────────────────────────
+class WSEvent(BaseModel):
+    """Canonical WebSocket event frame sent to the dashboard."""
+
+    event: str
+    call_id: str
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    data: dict[str, Any] = Field(default_factory=dict)
+
+
+# Rebuild forward references
+CallSession.model_rebuild()

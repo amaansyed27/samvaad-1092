@@ -40,7 +40,7 @@ logger = logging.getLogger("samvaad.main")
 async def lifespan(app: FastAPI):
     logger.info("╔══════════════════════════════════════════╗")
     logger.info("║   SAMVAAD 1092 — Starting Up             ║")
-    logger.info("║   Karnataka 1092 Helpline AI Layer        ║")
+    logger.info("║   Karnataka 1092 Helpline AI Layer       ║")
     logger.info("╚══════════════════════════════════════════╝")
 
     # Initialise database
@@ -122,6 +122,31 @@ async def call_history(limit: int = 50):
     records = await get_call_history(limit=limit)
     return {"count": len(records), "records": records}
 
+@app.get("/api/analytics/overview")
+async def get_analytics_overview_api():
+    """Get high-level analytics for the dashboard overview."""
+    from app.core.database import get_analytics_overview
+    return await get_analytics_overview()
+
+
+@app.get("/api/grievances")
+async def get_grievances(limit: int = 100):
+    """Alias for history to power the grievance inbox view."""
+    from app.core.database import get_call_history
+    records = await get_call_history(limit=limit)
+    return {"count": len(records), "records": records}
+
+
+@app.post("/api/grievances/{call_id}/resolve")
+async def resolve_grievance_api(call_id: str):
+    """Mark a grievance as resolved."""
+    from app.core.database import resolve_grievance
+    success = await resolve_grievance(call_id)
+    if not success:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Call record not found")
+    return {"success": True, "call_id": call_id, "status": "RESOLVED"}
+
 
 @app.get("/api/learning")
 async def learning_signals(limit: int = 100):
@@ -154,6 +179,7 @@ async def ws_call(ws: WebSocket):
     Primary call channel — new call session.
     Accepts audio chunks, transcript text, and confirmation signals.
     """
+    await ws.accept()
     manager = get_manager()
     session = await manager.connect(ws)
     try:
@@ -167,6 +193,7 @@ async def ws_call(ws: WebSocket):
 @app.websocket("/ws/call/{call_id}")
 async def ws_call_join(ws: WebSocket, call_id: str):
     """Join an existing call session (e.g., supervisor monitoring)."""
+    await ws.accept()
     manager = get_manager()
     session = await manager.connect(ws, call_id=call_id)
     try:
@@ -181,17 +208,61 @@ async def ws_call_join(ws: WebSocket, call_id: str):
 async def ws_dashboard(ws: WebSocket):
     """
     Dashboard event stream — broadcasts all session events.
-    Read-only: ignores incoming messages.
+    Also allows the dashboard to send commands (takeover, agent_edit) to specific calls.
     """
-    await ws.accept()
-    # The dashboard WS is a passive listener; it receives broadcasts
-    # through the ConnectionManager when connected to specific calls.
-    # For a global feed, we could implement a pub/sub pattern here.
+    from app.ws.call_handler import get_manager
+    manager = get_manager()
+    await manager.connect_dashboard(ws)
     try:
         while True:
-            await ws.receive_text()  # keep-alive
+            text = await ws.receive_text()
+            try:
+                import json
+                data = json.loads(text)
+                call_id = data.get("call_id")
+                if call_id:
+                    session = manager.active_sessions.get(call_id)
+                    if session:
+                        await manager.handle_message(ws, session, text)
+            except Exception as exc:
+                pass
     except WebSocketDisconnect:
-        pass
+        await manager.disconnect_dashboard(ws)
+
+
+from fastapi import Request
+from fastapi.responses import HTMLResponse
+
+@app.post("/api/twiml")
+async def twilio_webhook(request: Request):
+    """
+    Twilio Webhook: Returns TwiML XML instructing Twilio to connect
+    the phone call to our WebSocket stream.
+    """
+    # Extract the host dynamically from the request headers to support ngrok
+    host = request.headers.get("host")
+    protocol = "wss" if "ngrok" in host or "https" in str(request.url) else "ws"
+    ws_url = f"{protocol}://{host}/ws/twilio"
+    
+    xml = f"""<?xml version="1.0" encoding="UTF-8"?>
+    <Response>
+        <Say voice="Polly.Aditi">Welcome to the Karnataka 1 0 9 2 Helpline. Speak in English, Hindi mein boliye, or Kannada-dalli maathanaadi, after the tone.</Say>
+        <Play digits="0"></Play>
+        <Connect>
+            <Stream url="{ws_url}" />
+        </Connect>
+    </Response>"""
+    return HTMLResponse(content=xml, media_type="application/xml")
+
+
+@app.websocket("/ws/twilio")
+async def ws_twilio(ws: WebSocket):
+    """
+    Twilio Media Stream WebSocket Handler.
+    """
+    from app.ws.twilio_handler import TwilioMediaStreamHandler
+    handler = TwilioMediaStreamHandler(ws)
+    await handler.handle()
 
 
 # ══════════════════════════════════════════════════════════════════════════════

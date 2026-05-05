@@ -28,7 +28,7 @@ dashboard/dist/
 dashboard/.env.local
 
 # ML Models (downloaded at runtime)
-models/
+/models/
 *.pt
 *.bin
 *.onnx
