@@ -7,68 +7,64 @@ This guide outlines the testing procedures for the **Samvaad 1092** platform, en
 ## 🛠️ Testing Environment Setup
 
 Before testing, ensure your backend and dashboard are running:
-- **Backend**: `uvicorn app.main:app --reload` (Port 8000)
-- **Dashboard**: `npm run dev` (Port 5173)
-- **Check**: Navigate to [http://localhost:5173](http://localhost:5173). You should see "Live" status in the top right.
+- **Backend**: `python -m app.main` (Runs on Port 8000)
+- **Dashboard**: `npm run dev` (Runs on Port 5173)
+
+### Option A: The "Live Phone" Demo (Twilio + Ngrok) - Recommended
+To show a real-world, production-ready system:
+1. Run ngrok to expose your local backend: `ngrok http 8000` (or use `lt --port 8000`).
+2. Copy the forwarding URL (e.g. `https://xxxx-xxxx.ngrok-free.dev`).
+3. In your Twilio Console, go to your Active Phone Number -> Voice Configuration.
+4. Set "A CALL COMES IN" to Webhook, and paste: `https://[your-ngrok-url]/api/twiml`.
+5. Open your Dashboard at `http://localhost:5173` and stay on the "Overview" or "Inbox" tab.
+6. Call the Twilio phone number from your mobile device. The Dashboard will automatically detect the call and snap to the Live Terminal view!
+
+### Option B: The "Browser Mic" Debug Mode
+If you don't have cellular service or Twilio:
+1. Open the Dashboard at `http://localhost:5173`.
+2. Click the **"Bug / Debug"** icon in the bottom-left of the sidebar to reveal the Call Simulator Panel.
+3. Use the **Text Mode** to paste transcripts, or the **Live Mic** button to speak into your laptop microphone.
 
 ---
 
-## 🧪 Phase 1: Security & Sovereignty Testing (Local)
+## 🧪 Phase 1: Security & ML Routing Testing
 
-### 1.1 PII Redaction Verification
-The goal is to ensure no citizen data (Aadhaar, Phone, Name) reaches the LLM swarm.
+### 1.1 Local ML Department Routing
+- **Action**: Call the number or use the simulator. Say: "There is a massive pothole in front of my house."
+- **Expected Outcome**: The dashboard instantly flashes a **"⚡ Fast ML Routed"** badge with high confidence, routing it to `BBMP`.
+
+### 1.2 PII Redaction Verification
+The goal is to ensure no citizen data reaches the LLM swarm.
 - **Action**: Use "Text Simulator" mode.
-- **Test Input**: "Hello, my name is Amaan Syed and my phone number is 9876543210. My Aadhaar is 1234 5678 9101."
-- **Expected Outcome**:
-  - The "Live Transcript" shows the raw text.
-  - The "State Timeline" advances to **SCRUB PII**.
-  - In the backend logs or DB record, the `scrubbed_transcript` should show: "Hello, my name is [NAME_REDACTED] and my phone number is [PHONE_REDACTED]. My Aadhaar is [AADHAAR_REDACTED]."
-  - **Verdict**: Pass if LLM analysis uses only the scrubbed text.
-
-### 1.2 Acoustic Guardian (Distress Detection)
-Ensures immediate escalation for life-threatening situations without ASR lag.
-- **Action**: Switch to "Live Mic" mode.
-- **Test Input**: Shouting or loud/high-pitch sounds (simulating panic).
-- **Expected Outcome**:
-  - The "Distress" gauge should spike into the **CRITICAL** (red) zone.
-  - The state should instantly jump to **SAFE_HUMAN_TAKEOVER**.
-  - **Verdict**: Pass if the system bypasses the verification loop for high-stress audio.
+- **Test Input**: "My phone number is 9876543210 and my Aadhaar is 1234 5678 9101."
+- **Expected Outcome**: The database log shows `scrubbed_transcript`: "My phone number is [PHONE_REDACTED] and my Aadhaar is [AADHAAR_REDACTED]."
 
 ---
 
 ## 🌍 Phase 2: Multilingual & Dialect Testing
 
-### 2.1 Kannada Dialect Analysis
-- **Action**: Paste/Speak a Kannada transcript with regional dialect (e.g., North Karnataka variation).
+### 2.1 Code-Mixed Speech Processing
+- **Action**: Use mixed input: "Road damage hai sir, please help me fast."
 - **Expected Outcome**:
-  - `language_detected` identifies Kannada.
-  - `AnalysisCard` shows `cultural_context` identifying the dialect/nuance.
-  - `restated_summary` is generated in correct Kannada script.
-
-### 2.2 Hindi/English Code-Mixing
-- **Action**: Use mixed input: "Mujhe problem hai, station ke paas accident hua hai, help me fast."
-- **Expected Outcome**:
-  - AI identifies the emergency as "Accident".
-  - Severity is set to "High" or "Critical".
-  - Restatement captures the bilingual intent.
+  - `language_detected` identifies Hindi/English mix.
+  - The AI identifies the grievance as "Road Damage" and routes it to `BBMP`.
+  - Restatement is generated in Hindi/English.
 
 ---
 
 ## 🤝 Phase 3: Human-in-the-Loop (HITL) Testing
 
 ### 3.1 Agent Corrections (Learning Signals)
-- **Action**: Send a transcript. Once the **Analysis Card** appears, click "✏ Edit".
-- **Change**: Alter the `Emergency Type` or `Severity`. Click "⬆ Save".
+- **Action**: Call the system. Once the **Analysis Card** appears, click "✏ Edit".
+- **Change**: Alter the `Department` from `UNASSIGNED` to `POLICE`. Click "⬆ Save".
 - **Expected Outcome**:
-  - Dashboard shows "✓ Saved".
-  - Check `http://localhost:8000/api/learning`. The new correction should appear in the learning signal list.
-  - **Verdict**: Pass if agent corrections are persisted for model fine-tuning.
+  - The dashboard updates immediately.
+  - The edit is committed to the SQLite `call_records` table under `agent_corrections`. This data serves as the foundation for retraining the local ML classifier.
 
-### 3.2 Manual Takeover
-- **Action**: Click the "⚠ Manual Takeover" button during an active analysis.
-- **Expected Outcome**:
-  - State moves to `HUMAN_TAKEOVER`.
-  - Backend persists the current session with the "Agent manual takeover" reason.
+### 3.2 Grievance Resolution
+- **Action**: Navigate to the "Inbox" tab on the dashboard.
+- **Change**: Find a "PENDING" grievance and click "Mark Resolved".
+- **Expected Outcome**: The ticket turns green, and the "Analytics Overview" tab instantly updates the resolution rate chart.
 
 ---
 
@@ -76,16 +72,8 @@ Ensures immediate escalation for life-threatening situations without ASR lag.
 
 | Criterion | Test Reference | Result |
 |---|---|---|
-| **Verified Understanding** | Confirm/Reject loop in Simulator | [ ] |
-| **Multilingual Support** | Kannada/Hindi ASR + TTS tests | [ ] |
-| **Acoustic Distress** | Mic recording vs Distress Gauge | [ ] |
-| **PII Data Security** | Scrubbing logs check | [ ] |
-| **Agent-in-the-Loop** | Analysis Card edit test | [ ] |
-| **High Concurrency** | Multiple browser tabs connected | [ ] |
-
----
-
-## 🐛 Troubleshooting
-- **WebSocket Error**: Check if Vite proxy is active. Ensure `backend/app/main.py` is running on the correct port.
-- **TTS No Sound**: Ensure your browser hasn't blocked "Autoplay with sound". Click the "🔊 Replay" button to test.
-- **Empty Analysis**: Check your `.env` for valid OpenRouter or Gemini API keys.
+| **Voice-to-Voice Primary Focus** | Real Twilio cell phone test | [ ] |
+| **Verified Understanding** | AI restates the issue and waits for confirmation | [ ] |
+| **Dialect/Cultural Context** | LLM extracts specific location/cultural hints | [ ] |
+| **Learning from Feedback** | Agent Edits are saved to SQLite DB | [ ] |
+| **Scalability (Tech Design)** | Fast Local ML routing before heavy LLM processing | [ ] |
