@@ -71,16 +71,46 @@ def _extract_features(audio: NDArray[np.float32], sr: int) -> dict[str, float]:
     }
 
 
+import os
+import joblib
+
+# Load custom trained ML model (Random Forest Regressor)
+# This model replaces the basic heuristic with a 100-tree RF trained on acoustic signatures
+_ML_MODEL_PATH = os.path.join(os.path.dirname(__file__), "..", "models", "acoustic_rf.joblib")
+_rf_model = None
+
+try:
+    if os.path.exists(_ML_MODEL_PATH):
+        _rf_model = joblib.load(_ML_MODEL_PATH)
+        logger.info("Custom Acoustic ML Model (RandomForest) loaded successfully.")
+    else:
+        logger.warning(f"ML Model not found at {_ML_MODEL_PATH}. Using fallback heuristic.")
+except Exception as e:
+    logger.error(f"Failed to load ML Model: {e}")
+
 def _compute_distress_score(features: dict[str, float]) -> float:
     """
     Weighted composite of acoustic features → scalar distress score [0, 1].
-
-    Weights are tuned for emergency call scenarios:
-        - Energy dominates (screaming / crying is loud)
-        - Centroid captures shrill screams
-        - ZCR captures background chaos
-        - MFCC variance captures erratic speech patterns
+    
+    Uses our custom-trained Random Forest ML model to predict distress based 
+    on non-linear interactions between energy, pitch (centroid), static (zcr), 
+    and vocal instability (mfcc_var).
     """
+    if _rf_model is not None:
+        try:
+            # Prepare feature vector: [energy, centroid, zcr, mfcc_var]
+            X = np.array([[
+                features["energy"], 
+                features["centroid"], 
+                features["zcr"], 
+                features["mfcc_var"]
+            ]])
+            score = _rf_model.predict(X)[0]
+            return float(np.clip(score, 0.0, 1.0))
+        except Exception as e:
+            logger.error(f"ML Prediction failed, using heuristic: {e}")
+            
+    # Fallback heuristic
     weights = {
         "energy": 0.40,
         "centroid": 0.25,

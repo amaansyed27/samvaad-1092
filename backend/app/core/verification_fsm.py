@@ -76,16 +76,21 @@ Be precise. This is a life-safety system."""
 _ANALYSIS_PROMPT = """\
 You are an expert emergency dispatcher for the Karnataka 1092 Helpline.
 You handle calls in Kannada, Hindi, and English. Analyse this scrubbed
-transcript and return ONLY a JSON object:
+transcript and the provided Acoustic Distress Score, then return ONLY a JSON object:
 {
   "emergency_type": "medical|fire|accident|crime|natural_disaster|domestic_violence|other",
+  "department": "BESCOM|BBMP|BWSSB|POLICE|FIRE|OTHER",
   "location_hint": "any location clues from the caller",
   "severity": "critical|high|medium|low",
+  "priority": "CRITICAL|HIGH|MEDIUM|LOW",
   "sentiment": "distressed|calm|panicked|angry|confused",
   "key_details": ["detail1", "detail2"],
   "cultural_context": "any dialect or cultural nuances relevant to responders",
+  "semantic_distress_score": 0.0-1.0,
+  "requires_immediate_takeover": true/false,
   "confidence": 0.0-1.0
 }
+Use the Acoustic Distress Score as a hint: if it is high (e.g., > 0.8) and the text is frantic, require immediate takeover. If the text is calm but the mic is loud, semantic_distress should be low.
 Be thorough but concise. Lives depend on accuracy."""
 
 _RESTATE_PROMPT = """\
@@ -96,6 +101,26 @@ the caller used. This will be spoken back to the caller for verification.
 Format: "I understand that [situation]. Is that correct?"
 Translate to the caller's language if not English.
 Keep it under 50 words. Be empathetic but clear."""
+
+_CONFIRMATION_PROMPT = """\
+You are an emergency intent analyser. The AI assistant just restated the emergency
+and asked if it was correct. Based on the user's response, determine if they
+confirmed (said yes/correct/true) or rejected (said no/wrong/false).
+
+Return ONLY a JSON object:
+{
+  "confirmed": true/false,
+  "confidence": 0.0-1.0
+}"""
+
+_DISPATCH_PROMPT = """\
+You are an emergency dispatcher. The caller has just confirmed their emergency details.
+Generate a final reassurance message in their language (English/Hindi/Kannada).
+Tell them that help (ambulance/fire/police) is being dispatched and to stay on the line.
+Keep it under 20 words.
+Example: "An ambulance is being dispatched now. Please stay on the line."
+"""
+
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -160,38 +185,59 @@ class VerificationEngine:
         self, session: CallSession, audio_bytes: bytes
     ) -> dict:
         """
-        Process an audio chunk: distress analysis + transcription stub.
-
-        In production, this would integrate a real-time ASR service.
-        For the hackathon, we simulate transcription and focus on the
-        distress detection + verification pipeline.
+        Process an audio chunk: distress analysis.
         """
         # Run Acoustic Guardian
         distress = await self._guardian.analyse(audio_bytes)
+        # Store latest acoustic distress to be used as context in semantic analysis
         session.distress_score = distress["score"]
         session.distress_level = distress["level"]
 
-        # CRITICAL DISTRESS → immediate takeover
-        if distress["should_takeover"]:
-            return self.force_takeover(
-                session,
-                f"Acoustic distress score {distress['score']:.2f} ≥ {settings.distress_threshold}",
-            )
+        # NOTE: We no longer force an immediate takeover just on acoustic signals.
+        # This prevents bad mics from breaking the loop. 
+        # The LLM will decide semantic distress based on Acoustic Score + Transcript.
 
         return {
             "event": "audio_processed",
             "distress": distress,
         }
 
-    def receive_transcript(
+    async def receive_transcript(
         self, session: CallSession, transcript: str
     ) -> dict:
         """
-        Receive a transcript chunk (from ASR) and transition to SCRUB.
+        Receive a transcript chunk.
+        If in LISTEN -> Move to SCRUB.
+        If in WAIT_FOR_CONFIRM -> Auto-check for confirmation.
         """
+        current_state = VerificationState(session.state)
+        
+        if current_state == VerificationState.WAIT_FOR_CONFIRM:
+            # Automated confirmation check
+            try:
+                conf_text, _ = await self._factory.cascade_generate(
+                    system_prompt=_CONFIRMATION_PROMPT,
+                    user_message=f"Restatement: {session.restated_summary}\nCaller Response: {transcript}",
+                    purpose="confirmation",
+                    providers=["groq", "gemini"],
+                    max_tokens=64,
+                )
+                conf_data = _safe_json_parse(conf_text)
+                if conf_data.get("confirmed") and conf_data.get("confidence", 0) > 0.6:
+                    return await self.confirm(session, True)
+                elif not conf_data.get("confirmed") and conf_data.get("confidence", 0) > 0.6:
+                    return await self.confirm(session, False)
+            except Exception as exc:
+                logger.error("Auto-confirmation failed: %s", exc)
+            
+            # If auto-confirmation fails or is ambiguous, just stay in WAIT_FOR_CONFIRM
+            return {"event": "transcript_received", "transcript": transcript, "note": "Ambiguous confirmation"}
+
+        # Normal loop
         session.raw_transcript += " " + transcript.strip()
         self._transition(session, VerificationState.SCRUB)
         return {"event": "state_change", "state": "SCRUB"}
+
 
     # ── Phase: SCRUB → ANALYZE ───────────────────────────────────────────
 
@@ -222,6 +268,7 @@ class VerificationEngine:
             3. DeepSeek (cultural nuance fallback)
         """
         transcript = session.scrubbed_transcript
+        acoustic_score = session.distress_score or 0.0
 
         # ── Step 1: Fast sentiment via Groq/Flash ────────────────────────
         try:
@@ -242,9 +289,13 @@ class VerificationEngine:
 
         # ── Step 2: Deep analysis via DeepSeek/Gemini ────────────────────
         try:
+            analysis_prompt_input = (
+                f"Acoustic Distress Score (0=calm, 1=screaming/noise): {acoustic_score:.2f}\n"
+                f"Transcript: {transcript}"
+            )
             analysis_text, analysis_log = await self._factory.cascade_generate(
                 system_prompt=_ANALYSIS_PROMPT,
-                user_message=transcript,
+                user_message=analysis_prompt_input,
                 purpose="analysis",
                 providers=["groq", "openrouter", "gemini", "or-hy3", "or-oss-120b", "or-nano", "deepseek"],
                 max_tokens=1024,
@@ -252,10 +303,21 @@ class VerificationEngine:
             analysis_data = _safe_json_parse(analysis_text)
             session.analysis_result = AnalysisResult(**analysis_data)
             session.confidence = analysis_data.get("confidence", 0.0)
+            if analysis_data.get("department"):
+                session.department_assigned = analysis_data["department"]
+            if analysis_data.get("priority"):
+                session.priority = analysis_data["priority"]
             session.cascade_log.extend(analysis_log)
         except Exception as exc:
             logger.error("Analysis cascade failed: %s", exc)
             session.confidence = 0.0
+
+        # High semantic distress → human takeover
+        if session.analysis_result and session.analysis_result.requires_immediate_takeover:
+            return self.force_takeover(
+                session,
+                f"Semantic analysis requested immediate takeover (Semantic Distress: {session.analysis_result.semantic_distress_score:.2f})",
+            )
 
         # Low confidence → human takeover
         if session.confidence < 0.5:
@@ -312,31 +374,46 @@ class VerificationEngine:
 
     # ── Phase: WAIT_FOR_CONFIRM → VERIFIED / LISTEN ──────────────────────
 
-    def confirm(self, session: CallSession, confirmed: bool) -> dict:
+    async def confirm(self, session: CallSession, confirmed: bool) -> dict:
         """
         Caller confirms or rejects the restatement.
-
-        If confirmed → VERIFIED (terminal success).
-        If rejected  → LISTEN (loop back for re-capture).
+        If confirmed -> VERIFIED + generate dispatch message.
         """
         session.caller_confirmed = confirmed
 
         if confirmed:
             self._transition(session, VerificationState.VERIFIED)
+            
+            # Generate final dispatch reassurance
+            dispatch_msg = "An ambulance has been dispatched. Please stay on the line."
+            try:
+                res, _ = await self._factory.cascade_generate(
+                    system_prompt=_DISPATCH_PROMPT,
+                    user_message=f"Context: {session.restated_summary}\nLanguage: {session.language_detected}",
+                    purpose="dispatch_feedback",
+                    providers=["groq", "gemini"],
+                    max_tokens=128
+                )
+                dispatch_msg = res.strip()
+            except Exception:
+                pass
+
             return {
                 "event": "VERIFIED",
                 "state": "VERIFIED",
                 "summary": session.restated_summary,
+                "dispatch_message": dispatch_msg,
                 "confidence": session.confidence,
             }
         else:
-            # Rejection loops back to LISTEN for re-capture
+            # Rejection loops back to LISTEN
             self._transition(session, VerificationState.LISTEN)
             return {
                 "event": "state_change",
                 "state": "LISTEN",
                 "reason": "Caller rejected restatement — re-listening",
             }
+
 
 
 # ── Utilities ────────────────────────────────────────────────────────────────
