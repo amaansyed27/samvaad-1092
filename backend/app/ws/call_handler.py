@@ -36,6 +36,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 from app.core.sarvam_bridge import get_stt, get_tts
 from app.core.verification_fsm import VerificationEngine
 from app.models import CallSession, VerificationState, WSEvent
+from app.core.ml_routing import predict_department
 
 logger = logging.getLogger("samvaad.ws_handler")
 
@@ -45,6 +46,7 @@ class ConnectionManager:
 
     def __init__(self) -> None:
         self._connections: dict[str, list[WebSocket]] = {}  # call_id → [ws]
+        self._dashboard_connections: set[WebSocket] = set()
         self._sessions: dict[str, CallSession] = {}
         self._engine = VerificationEngine()
         self._stt = get_stt()
@@ -54,10 +56,19 @@ class ConnectionManager:
     def active_sessions(self) -> dict[str, CallSession]:
         return dict(self._sessions)
 
+    async def connect_dashboard(self, ws: WebSocket) -> None:
+        """Register a global dashboard observer."""
+        await ws.accept()
+        self._dashboard_connections.add(ws)
+        logger.info("Global Dashboard WS connected")
+
+    async def disconnect_dashboard(self, ws: WebSocket) -> None:
+        if ws in self._dashboard_connections:
+            self._dashboard_connections.remove(ws)
+        logger.info("Global Dashboard WS disconnected")
+
     async def connect(self, ws: WebSocket, call_id: str | None = None) -> CallSession:
         """Accept a new WebSocket and create/join a call session."""
-        await ws.accept()
-
         session = CallSession() if call_id is None else self._sessions.get(call_id)
         if session is None:
             session = CallSession(call_id=call_id) if call_id else CallSession()
@@ -149,16 +160,44 @@ class ConnectionManager:
         # Step 2: Sarvam STT — transcribe audio
         stt_result = await self._stt.transcribe(audio_bytes)
         transcript = stt_result.get("transcript", "").strip()
+        prob = stt_result.get("language_prob", 0.0)
 
         if not transcript:
             return
+
+        # ── Hallucination & Noise Filtering ────────────────────────────────
+        
+        # 1. Known STT hallucination artifacts on silence/noise
+        lower_t = transcript.lower()
+        known_hallucinations = ["j j.", "okay, fine.", "hello.", "hello", "test.", "test", "yes.", "no."]
+        if lower_t in known_hallucinations and prob < 0.75:
+            logger.info("Filtered STT hallucination: '%s' (prob: %.3f)", transcript, prob)
+            return
+
+        # 2. Filter extremely short, low-confidence blips
+        words = transcript.split()
+        if len(words) < 3 and prob < 0.5:
+            logger.info("Filtered low-prob short transcript: '%s' (prob: %.3f)", transcript, prob)
+            return
+
+        # 3. Filter repetitive loop hallucinations (e.g., "Yes, yes, yes, yes...")
+        if len(words) > 3 and len(set(words)) == 1:
+            logger.info("Filtered repetitive loop hallucination: '%s'", transcript)
+            return
+
+        # ───────────────────────────────────────────────────────────────────
+
+        # Run Fast ML Routing
+        ml_route = predict_department(transcript)
+        session.department_assigned = ml_route["department"]
 
         # Send real-time transcript to dashboard
         await self._broadcast(call_id, {
             "event": "transcript_received",
             "transcript": transcript,
             "language_code": stt_result.get("language_code", "unknown"),
-            "language_prob": stt_result.get("language_prob", 0.0),
+            "language_prob": prob,
+            "ml_routing": ml_route
         })
 
         # Step 3: Run full verification pipeline with transcribed text
@@ -171,6 +210,15 @@ class ConnectionManager:
         text = msg.get("text", "").strip()
         if not text:
             return
+            
+        # Run Fast ML Routing
+        ml_route = predict_department(text)
+        session.department_assigned = ml_route["department"]
+        await self._broadcast(call_id, {
+            "event": "ml_routing_update",
+            "ml_routing": ml_route
+        })
+            
         await self._run_pipeline(session, text, call_id)
 
     async def _run_pipeline(
@@ -178,8 +226,9 @@ class ConnectionManager:
     ) -> None:
         """Run the full SCRUB → ANALYZE → RESTATE pipeline."""
         # LISTEN → SCRUB
-        event = self._engine.receive_transcript(session, transcript)
+        event = await self._engine.receive_transcript(session, transcript)
         await self._broadcast(call_id, event)
+
 
         # SCRUB (PII redaction)
         event = self._engine.scrub(session)
@@ -218,8 +267,25 @@ class ConnectionManager:
     ) -> None:
         """Handle caller confirmation/rejection of restatement."""
         confirmed = msg.get("confirmed", False)
-        event = self._engine.confirm(session, confirmed)
+        event = await self._engine.confirm(session, confirmed)
+        
+        # If confirmed, generate TTS for the dispatch message
+        if confirmed and event.get("dispatch_message"):
+            lang_map = {
+                "kannada": "kn-IN",
+                "hindi": "hi-IN",
+                "english": "en-IN",
+                "mixed": "hi-IN",
+            }
+            tts_lang = lang_map.get(session.language_detected.lower(), "en-IN")
+            tts_result = await self._tts.synthesise(
+                event["dispatch_message"],
+                target_language=tts_lang,
+            )
+            event["tts_audio"] = tts_result.get("audio_base64", "")
+
         await self._broadcast(call_id, event)
+
 
         # Persist on terminal states
         if session.state in (
@@ -270,6 +336,9 @@ class ConnectionManager:
                 "scrubbed_transcript": session.scrubbed_transcript,
                 "restated_summary": session.restated_summary,
                 "emergency_type": analysis.emergency_type if analysis else "",
+                "department_assigned": session.department_assigned,
+                "resolution_status": session.resolution_status,
+                "priority": session.priority,
                 "severity": analysis.severity if analysis else "",
                 "sentiment": session.sentiment,
                 "location_hint": analysis.location_hint if analysis else "",
@@ -288,18 +357,52 @@ class ConnectionManager:
             logger.error("Failed to persist session %s: %s", session.call_id, exc)
 
     async def _broadcast(self, call_id: str, data: dict) -> None:
-        """Send an event to all WebSocket connections for a call."""
+        """Send an event to all WebSocket connections for a call, plus global dashboards."""
         data["call_id"] = call_id
         data["timestamp"] = datetime.now(timezone.utc).isoformat()
+        
+        # 1. Send to specific call connections (including Twilio)
         conns = self._connections.get(call_id, [])
         dead: list[WebSocket] = []
         for ws in conns:
             try:
-                await ws.send_json(data)
+                if getattr(ws, "is_twilio", False):
+                    # Twilio requires a specific media format and doesn't care about state events.
+                    # Only send TTS audio.
+                    tts_b64 = data.get("tts_audio")
+                    if tts_b64:
+                        import audioop
+                        import base64
+                        
+                        # 1. Decode 16kHz PCM from Sarvam
+                        pcm_16k = base64.b64decode(tts_b64)
+                        # 2. Resample 16kHz -> 8kHz
+                        pcm_8k, _ = audioop.ratecv(pcm_16k, 2, 1, 16000, 8000, None)
+                        # 3. Convert 8kHz PCM to 8kHz mulaw
+                        mulaw = audioop.lin2ulaw(pcm_8k, 2)
+                        
+                        tw_msg = {
+                            "event": "media",
+                            "streamSid": ws.stream_sid,
+                            "media": {"payload": base64.b64encode(mulaw).decode("utf-8")}
+                        }
+                        await ws.send_json(tw_msg)
+                else:
+                    await ws.send_json(data)
             except Exception:
                 dead.append(ws)
         for ws in dead:
             conns.remove(ws)
+
+        # 2. Send to all global dashboard observers
+        dead_dashboards: list[WebSocket] = []
+        for dws in self._dashboard_connections:
+            try:
+                await dws.send_json(data)
+            except Exception:
+                dead_dashboards.append(dws)
+        for dws in dead_dashboards:
+            self._dashboard_connections.remove(dws)
 
 
 # Singleton
