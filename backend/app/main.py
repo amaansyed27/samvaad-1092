@@ -147,6 +147,37 @@ async def resolve_grievance_api(call_id: str):
         raise HTTPException(status_code=404, detail="Call record not found")
     return {"success": True, "call_id": call_id, "status": "RESOLVED"}
 
+@app.get("/api/ml/status")
+async def ml_status_api():
+    """Get the active learning status."""
+    from app.core.database import get_unapplied_training_data
+    unapplied = await get_unapplied_training_data()
+    return {
+        "pending_corrections": len(unapplied),
+        "status": "ready" if len(unapplied) > 0 else "up_to_date"
+    }
+
+@app.post("/api/ml/retrain")
+async def ml_retrain_api():
+    """Trigger a hot-reload active learning cycle."""
+    from app.core.database import get_unapplied_training_data, mark_training_data_applied
+    from app.core.ml_routing import retrain_classifier
+    
+    unapplied = await get_unapplied_training_data()
+    if not unapplied:
+        return {"success": True, "message": "No new data to train on."}
+        
+    # Retrain the model
+    success = retrain_classifier(unapplied)
+    if success:
+        # Mark as applied so we don't train on them again unnecessarily 
+        # (Though our retrain_classifier script reloads all base data anyway)
+        await mark_training_data_applied([r["id"] for r in unapplied])
+        return {"success": True, "message": f"Successfully trained on {len(unapplied)} new edge cases."}
+    
+    from fastapi import HTTPException
+    raise HTTPException(status_code=500, detail="Model retraining failed")
+
 
 @app.get("/api/learning")
 async def learning_signals(limit: int = 100):

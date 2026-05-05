@@ -15,7 +15,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import Column, DateTime, Float, Integer, String, Text, JSON, Boolean
+from sqlalchemy import Column, DateTime, Float, Integer, String, Text, JSON, Boolean, ForeignKey
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 
@@ -83,6 +83,18 @@ class CallRecord(Base):
     def __repr__(self) -> str:
         return f"<CallRecord {self.call_id} state={self.state}>"
 
+
+class MLTrainingData(Base):
+    """Gold standard corrections for active learning."""
+    __tablename__ = "ml_training_data"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    call_id = Column(String(20), index=True)
+    transcript = Column(Text, nullable=False)
+    corrected_department = Column(String(50), nullable=False)
+    source = Column(String(20), nullable=False) # 'LLM' or 'AGENT'
+    applied = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 # ── Engine & Session Factory ────────────────────────────────────────────────
 
@@ -288,3 +300,40 @@ async def get_analytics_overview() -> dict:
             "departments": departments,
             "statuses": statuses
         }
+
+async def save_ml_training_data(call_id: str, transcript: str, corrected_department: str, source: str) -> None:
+    """Save a correction to be used for active learning."""
+    async with get_session() as db:
+        record = MLTrainingData(
+            call_id=call_id,
+            transcript=transcript,
+            corrected_department=corrected_department,
+            source=source
+        )
+        db.add(record)
+        await db.commit()
+
+async def get_unapplied_training_data() -> list[dict]:
+    """Get all pending corrections that need to be applied to the model."""
+    async with get_session() as db:
+        from sqlalchemy import select
+        stmt = select(MLTrainingData).where(MLTrainingData.applied == False)
+        result = await db.execute(stmt)
+        records = result.scalars().all()
+        return [
+            {
+                "id": r.id,
+                "transcript": r.transcript,
+                "department": r.corrected_department
+            }
+            for r in records
+        ]
+
+async def mark_training_data_applied(ids: list[int]) -> None:
+    """Mark training data as successfully applied to the model."""
+    if not ids: return
+    async with get_session() as db:
+        from sqlalchemy import update
+        stmt = update(MLTrainingData).where(MLTrainingData.id.in_(ids)).values(applied=True)
+        await db.execute(stmt)
+        await db.commit()

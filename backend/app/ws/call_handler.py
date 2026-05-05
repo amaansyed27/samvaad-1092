@@ -312,8 +312,18 @@ class ConnectionManager:
             return
 
         try:
-            from app.core.database import save_agent_edit
+            from app.core.database import save_agent_edit, save_ml_training_data
             await save_agent_edit(session.call_id, corrections)
+            
+            # If the agent corrected the department, add it to Active Learning
+            if "department" in corrections and corrections["department"] != "UNKNOWN":
+                await save_ml_training_data(
+                    session.call_id,
+                    session.raw_transcript,
+                    corrections["department"],
+                    "AGENT"
+                )
+                
             await self._broadcast(call_id, {
                 "event": "agent_edit_saved",
                 "corrections": corrections,

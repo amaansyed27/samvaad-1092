@@ -1,17 +1,49 @@
 
 import { useState, useEffect } from 'react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-import { Activity, CheckCircle, Clock, AlertTriangle } from 'lucide-react';
+import { Activity, CheckCircle, Clock, AlertTriangle, BrainCircuit, RefreshCw } from 'lucide-react';
 
 export default function AnalyticsOverview() {
   const [data, setData] = useState(null);
+  const [mlStatus, setMlStatus] = useState(null);
+  const [isRetraining, setIsRetraining] = useState(false);
 
-  useEffect(() => {
+  const fetchAnalytics = () => {
     fetch('http://localhost:8000/api/analytics/overview')
       .then(r => r.json())
       .then(setData)
       .catch(console.error);
+      
+    fetch('http://localhost:8000/api/ml/status')
+      .then(r => r.json())
+      .then(setMlStatus)
+      .catch(console.error);
+  };
+
+  useEffect(() => {
+    fetchAnalytics();
+    // Set an interval to refresh ML status
+    const interval = setInterval(fetchAnalytics, 5000);
+    return () => clearInterval(interval);
   }, []);
+
+  const handleRetrain = async () => {
+    setIsRetraining(true);
+    try {
+      const res = await fetch('http://localhost:8000/api/ml/retrain', { method: 'POST' });
+      const result = await res.json();
+      if (result.success) {
+        // Short timeout for UX
+        setTimeout(() => {
+          fetchAnalytics();
+          setIsRetraining(false);
+        }, 1000);
+      }
+    } catch (e) {
+      console.error(e);
+      setIsRetraining(false);
+    }
+  };
 
   if (!data) return <div className="p-8 text-white/50 text-sm tracking-widest uppercase">Loading Analytics...</div>;
 
@@ -19,7 +51,39 @@ export default function AnalyticsOverview() {
 
   return (
     <div className="flex-1 p-8 overflow-y-auto bg-[#030304] custom-scrollbar text-white">
-      <h2 className="text-xl font-bold tracking-widest uppercase text-white/80 mb-8">Civic Operations Overview</h2>
+      <div className="flex justify-between items-end mb-8">
+        <h2 className="text-xl font-bold tracking-widest uppercase text-white/80">Civic Operations Overview</h2>
+        
+        {/* ML Health Card */}
+        <div className="flex items-center gap-4 p-4 rounded-xl bg-white/[0.02] border border-white/5 shadow-lg">
+          <div className="flex items-center gap-3">
+            <div className={`p-2 rounded-lg ${mlStatus?.pending_corrections > 0 ? 'bg-amber-500/20 text-amber-400' : 'bg-emerald-500/20 text-emerald-400'}`}>
+              <BrainCircuit className="w-5 h-5" />
+            </div>
+            <div className="flex flex-col">
+              <span className="text-[10px] font-black tracking-widest uppercase text-white/40">Model Health</span>
+              <span className="text-xs font-bold text-white/90">
+                {mlStatus?.pending_corrections || 0} Pending Edge Cases
+              </span>
+            </div>
+          </div>
+          
+          <button 
+            onClick={handleRetrain}
+            disabled={isRetraining || mlStatus?.pending_corrections === 0}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${
+              isRetraining 
+                ? 'bg-indigo-500/50 text-white cursor-not-allowed' 
+                : mlStatus?.pending_corrections > 0
+                  ? 'bg-indigo-500/20 text-indigo-400 hover:bg-indigo-500/30 border border-indigo-500/30'
+                  : 'bg-white/5 text-white/20 cursor-not-allowed border border-white/5'
+            }`}
+          >
+            <RefreshCw className={`w-3 h-3 ${isRetraining ? 'animate-spin' : ''}`} />
+            {isRetraining ? 'Retraining...' : 'Deploy Active Learning'}
+          </button>
+        </div>
+      </div>
       
       <div className="grid grid-cols-4 gap-6 mb-8">
         <StatCard title="Total Grievances" value={data.total_calls} icon={<Activity className="text-indigo-400" />} />

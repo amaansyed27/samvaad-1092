@@ -312,6 +312,25 @@ class VerificationEngine:
             logger.error("Analysis cascade failed: %s", exc)
             session.confidence = 0.0
 
+        # Check for ML Routing correction (Active Learning Loop)
+        if session.department_assigned != "UNASSIGNED":
+            final_dept = session.analysis_result.department if session.analysis_result else None
+            # If the Heavy LLM disagrees with the Fast ML (or Fast ML was UNKNOWN)
+            if final_dept and final_dept != "OTHER" and final_dept != session.department_assigned:
+                logger.info(f"LLM Correction detected: ML said {session.department_assigned}, LLM said {final_dept}")
+                try:
+                    from app.core.database import save_ml_training_data
+                    # Create a fire-and-forget task so we don't block the call flow
+                    import asyncio
+                    asyncio.create_task(save_ml_training_data(
+                        session.call_id, 
+                        transcript, 
+                        final_dept, 
+                        "LLM"
+                    ))
+                except Exception as e:
+                    logger.error(f"Failed to save ML training data: {e}")
+
         # High semantic distress → human takeover
         if session.analysis_result and session.analysis_result.requires_immediate_takeover:
             return self.force_takeover(
