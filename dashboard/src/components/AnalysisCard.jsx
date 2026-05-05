@@ -1,18 +1,6 @@
 import { useState, useCallback } from 'react';
 
-/**
- * AnalysisCard — Displays AND allows editing of LLM analysis results.
- *
- * Theme 12 Compliance: Human-in-the-Loop — Agents can review and correct
- * AI-generated analysis before dispatch. Corrections are captured as
- * "learning signals" for continuous system improvement.
- *
- * Features:
- *   - Editable emergency type, severity, location, sentiment
- *   - Visual diff highlighting when edited
- *   - One-click save that sends corrections to backend
- */
-export default function AnalysisCard({ analysis, sentiment, language, onAgentEdit }) {
+export default function AnalysisCard({ analysis, mlRouting, sentiment, language, onAgentEdit }) {
   const [isEditing, setIsEditing] = useState(false);
   const [edits, setEdits] = useState({});
   const [saved, setSaved] = useState(false);
@@ -44,42 +32,50 @@ export default function AnalysisCard({ analysis, sentiment, language, onAgentEdi
 
   if (!analysis) {
     return (
-      <div className="glass-card p-5 flex flex-col items-center justify-center h-full gap-3">
-        <div className="w-10 h-10 rounded-xl bg-[rgba(139,92,246,0.08)] flex items-center justify-center">
-          <span className="text-xl">🧠</span>
+      <div className="glass-card p-6 flex flex-col items-center justify-center h-full gap-4 bg-black/20 border-white/5">
+        <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-purple-500/10 to-indigo-500/10 border border-purple-500/20 flex items-center justify-center shadow-lg shadow-purple-500/5">
+          <span className="text-2xl drop-shadow-md">🧠</span>
         </div>
-        <span className="text-sm text-[var(--color-text-muted)]">
-          Awaiting analysis…
+        <span className="text-sm font-bold tracking-widest text-white/50 uppercase">
+          Awaiting Analysis
         </span>
-        <p className="text-[10px] text-[var(--color-text-muted)] text-center max-w-[200px]">
-          Send a transcript or start recording to begin the verification pipeline.
+        <p className="text-xs text-white/30 text-center max-w-[200px] leading-relaxed">
+          Send a transcript or start recording to begin verification.
         </p>
       </div>
     );
   }
 
+  const isTerminal = analysis?.state === 'VERIFIED' || analysis?.state === 'HUMAN_TAKEOVER' || analysis?.requires_immediate_takeover;
+
   const severityColor = {
-    critical: 'var(--color-critical)',
-    high: 'var(--color-warning)',
-    medium: 'var(--color-analyzing)',
-    low: 'var(--color-verified)',
-  }[getField('severity')?.toLowerCase()] || 'var(--color-text-secondary)';
+    critical: '#ef4444',
+    high: '#f5a524',
+    medium: '#8b5cf6',
+    low: '#2dd4a0',
+  }[getField('severity')?.toLowerCase()] || '#8a8a96';
 
   const hasEdits = Object.keys(edits).length > 0;
 
   return (
-    <div className="glass-card p-5 space-y-4 animate-slide-up overflow-y-auto">
+    <div className="glass-card flex flex-col h-full bg-black/20 border-white/5 shadow-2xl animate-slide-up">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <h3 className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-secondary)]">
-          Emergency Analysis
-        </h3>
-        <div className="flex items-center gap-2">
+      <div className="flex-none flex items-center justify-between px-6 py-5 border-b border-white/5 bg-white/[0.01]">
+        <div className="flex flex-col">
+          <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-white/40">
+            Emergency Analytics
+          </h3>
+          <span className="text-[8px] text-white/10 uppercase tracking-widest font-bold mt-0.5">Semantic Pipeline v2.0</span>
+        </div>
+        
+        <div className="flex items-center gap-3">
           <span
-            className="status-badge"
+            className="px-3 py-1 rounded-full text-[10px] font-bold tracking-wider uppercase border shadow-sm"
             style={{
-              background: `${severityColor}18`,
+              background: `${severityColor}15`,
               color: severityColor,
+              borderColor: `${severityColor}30`,
+              boxShadow: `0 0 10px ${severityColor}10`
             }}
           >
             {getField('severity')?.toUpperCase() || 'UNKNOWN'}
@@ -87,27 +83,22 @@ export default function AnalysisCard({ analysis, sentiment, language, onAgentEdi
           {!isEditing ? (
             <button
               onClick={() => setIsEditing(true)}
-              className="px-2.5 py-1 rounded-md text-[10px] font-semibold uppercase tracking-wider transition-all duration-200
-                hover:scale-[1.03] active:scale-[0.97]"
-              style={{
-                background: 'rgba(99, 102, 241, 0.08)',
-                color: 'var(--color-listening)',
-                border: '1px solid rgba(99, 102, 241, 0.15)',
-              }}
+              className="px-3 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider transition-all duration-200
+                hover:scale-[1.03] active:scale-[0.97] bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 shadow-inner"
             >
               ✏ Edit
             </button>
           ) : (
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-2">
               {hasEdits && (
                 <button
                   onClick={handleSave}
-                  className="px-2.5 py-1 rounded-md text-[10px] font-semibold uppercase tracking-wider transition-all duration-200
-                    hover:scale-[1.03] active:scale-[0.97]"
+                  className="px-3 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider transition-all duration-200
+                    hover:scale-[1.03] active:scale-[0.97] shadow-inner"
                   style={{
-                    background: saved ? 'rgba(45, 212, 160, 0.12)' : 'rgba(99, 102, 241, 0.12)',
-                    color: saved ? 'var(--color-verified)' : 'var(--color-listening)',
-                    border: `1px solid ${saved ? 'rgba(45, 212, 160, 0.2)' : 'rgba(99, 102, 241, 0.2)'}`,
+                    background: saved ? 'rgba(45, 212, 160, 0.15)' : 'rgba(99, 102, 241, 0.15)',
+                    color: saved ? '#2dd4a0' : '#818cf8',
+                    border: `1px solid ${saved ? 'rgba(45, 212, 160, 0.3)' : 'rgba(99, 102, 241, 0.3)'}`,
                   }}
                 >
                   {saved ? '✓ Saved' : '⬆ Save'}
@@ -115,13 +106,8 @@ export default function AnalysisCard({ analysis, sentiment, language, onAgentEdi
               )}
               <button
                 onClick={handleCancel}
-                className="px-2.5 py-1 rounded-md text-[10px] font-semibold uppercase tracking-wider transition-all duration-200
-                  hover:scale-[1.03] active:scale-[0.97]"
-                style={{
-                  background: 'rgba(239, 68, 68, 0.08)',
-                  color: 'var(--color-critical)',
-                  border: '1px solid rgba(239, 68, 68, 0.15)',
-                }}
+                className="px-3 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider transition-all duration-200
+                  hover:scale-[1.03] active:scale-[0.97] bg-red-500/10 text-red-400 border border-red-500/20 shadow-inner"
               >
                 ✗ Cancel
               </button>
@@ -130,124 +116,150 @@ export default function AnalysisCard({ analysis, sentiment, language, onAgentEdi
         </div>
       </div>
 
-      {/* Agent edit banner */}
-      {isEditing && (
-        <div className="p-2.5 rounded-lg bg-[rgba(99,102,241,0.06)] border border-[rgba(99,102,241,0.12)] animate-fade-in">
-          <p className="text-[10px] text-[var(--color-listening)] uppercase tracking-wider">
-            ✏ Editing Mode — Corrections become learning signals
-          </p>
-        </div>
-      )}
-
-      {/* Grid */}
-      <div className="grid grid-cols-2 gap-3">
-        <EditableField
-          label="Type"
-          value={getField('emergency_type')}
-          isEditing={isEditing}
-          isEdited={edits.emergency_type !== undefined}
-          onChange={(v) => handleEdit('emergency_type', v)}
-        />
-        <EditableField
-          label="Sentiment"
-          value={getField('sentiment')}
-          isEditing={isEditing}
-          isEdited={edits.sentiment !== undefined}
-          onChange={(v) => handleEdit('sentiment', v)}
-        />
-        <EditableField
-          label="Location"
-          value={getField('location_hint', 'Not detected')}
-          isEditing={isEditing}
-          isEdited={edits.location_hint !== undefined}
-          onChange={(v) => handleEdit('location_hint', v)}
-        />
-        <EditableField
-          label="Language"
-          value={getField('language')}
-          isEditing={isEditing}
-          isEdited={edits.language !== undefined}
-          onChange={(v) => handleEdit('language', v)}
-        />
-      </div>
-
-      {/* Severity selector when editing */}
-      {isEditing && (
-        <div className="space-y-1.5">
-          <span className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">
-            Severity
-          </span>
-          <div className="flex gap-1.5">
-            {['low', 'medium', 'high', 'critical'].map((level) => {
-              const colors = {
-                low: 'var(--color-verified)',
-                medium: 'var(--color-analyzing)',
-                high: 'var(--color-warning)',
-                critical: 'var(--color-critical)',
-              };
-              const isActive = getField('severity')?.toLowerCase() === level;
-              return (
-                <button
-                  key={level}
-                  onClick={() => handleEdit('severity', level)}
-                  className="px-3 py-1 rounded-md text-[10px] font-semibold uppercase tracking-wider transition-all duration-200"
-                  style={{
-                    background: isActive ? `${colors[level]}20` : 'transparent',
-                    color: isActive ? colors[level] : 'var(--color-text-muted)',
-                    border: `1px solid ${isActive ? `${colors[level]}40` : 'var(--color-glass-border)'}`,
-                  }}
-                >
-                  {level}
-                </button>
-              );
-            })}
+      <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
+        {/* Agent edit banner */}
+        {isEditing && (
+          <div className="p-3 rounded-lg bg-indigo-500/10 border border-indigo-500/20 shadow-inner animate-fade-in flex items-center gap-3">
+            <span className="text-indigo-400 text-lg">🎓</span>
+            <p className="text-[10px] text-indigo-300 font-bold uppercase tracking-wider">
+              Editing Mode — Corrections become learning signals
+            </p>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* Key details */}
-      {analysis.key_details?.length > 0 && (
-        <div>
-          <span className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">
-            Key Details
-          </span>
-          <ul className="mt-1.5 space-y-1">
-            {analysis.key_details.map((d, i) => (
-              <li key={i} className="text-xs text-[var(--color-text-secondary)] flex gap-2">
-                <span className="text-[var(--color-text-muted)]">•</span>
-                {d}
-              </li>
-            ))}
-          </ul>
+        {/* Grid */}
+        <div className="grid grid-cols-2 gap-6">
+          <EditableField
+            label="Department"
+            value={getField('department', mlRouting?.department || 'UNASSIGNED')}
+            isEditing={isEditing}
+            isEdited={edits.department !== undefined}
+            onChange={(v) => handleEdit('department', v)}
+          />
+          <EditableField
+            label="Type"
+            value={getField('emergency_type')}
+            isEditing={isEditing}
+            isEdited={edits.emergency_type !== undefined}
+            onChange={(v) => handleEdit('emergency_type', v)}
+          />
+          <EditableField
+            label="Sentiment"
+            value={getField('sentiment')}
+            isEditing={isEditing}
+            isEdited={edits.sentiment !== undefined}
+            onChange={(v) => handleEdit('sentiment', v)}
+          />
+          <EditableField
+            label="Location"
+            value={getField('location_hint', 'Not detected')}
+            isEditing={isEditing}
+            isEdited={edits.location_hint !== undefined}
+            onChange={(v) => handleEdit('location_hint', v)}
+          />
+          <EditableField
+            label="Priority"
+            value={getField('priority', 'LOW')}
+            isEditing={isEditing}
+            isEdited={edits.priority !== undefined}
+            onChange={(v) => handleEdit('priority', v)}
+          />
+          <EditableField
+            label="Language"
+            value={getField('language')}
+            isEditing={isEditing}
+            isEdited={edits.language !== undefined}
+            onChange={(v) => handleEdit('language', v)}
+          />
         </div>
-      )}
 
-      {/* Cultural context */}
-      {analysis.cultural_context && (
-        <div className="p-3 rounded-lg bg-[rgba(139,92,246,0.06)] border border-[rgba(139,92,246,0.12)]">
-          <span className="text-[10px] uppercase tracking-wider text-[var(--color-analyzing)]">
-            Cultural Context
-          </span>
-          <p className="mt-1 text-xs text-[var(--color-text-secondary)] leading-relaxed">
-            {analysis.cultural_context}
-          </p>
-        </div>
-      )}
+        {mlRouting && !isEditing && mlRouting.department !== "UNKNOWN" && (
+          <div className="flex items-center justify-between p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
+            <div className="flex items-center gap-2">
+              <span className="text-emerald-400">⚡</span>
+              <span className="text-[10px] text-emerald-300 font-bold uppercase tracking-wider">Fast ML Routed</span>
+            </div>
+            <span className="text-[10px] text-emerald-400 font-mono">CONF: {(mlRouting.confidence * 100).toFixed(0)}%</span>
+          </div>
+        )}
+
+        {/* Severity selector when editing */}
+        {isEditing && (
+          <div className="space-y-2 pt-2 border-t border-white/5">
+            <span className="text-[10px] font-bold uppercase tracking-widest text-white/40">
+              Severity Level
+            </span>
+            <div className="flex gap-2">
+              {['low', 'medium', 'high', 'critical'].map((level) => {
+                const colors = {
+                  low: '#2dd4a0',
+                  medium: '#8b5cf6',
+                  high: '#f5a524',
+                  critical: '#ef4444',
+                };
+                const isActive = getField('severity')?.toLowerCase() === level;
+                return (
+                  <button
+                    key={level}
+                    onClick={() => handleEdit('severity', level)}
+                    className="flex-1 py-1.5 rounded-md text-[10px] font-bold uppercase tracking-widest transition-all duration-200"
+                    style={{
+                      background: isActive ? `${colors[level]}20` : 'rgba(255,255,255,0.02)',
+                      color: isActive ? colors[level] : 'rgba(255,255,255,0.4)',
+                      border: `1px solid ${isActive ? `${colors[level]}40` : 'rgba(255,255,255,0.1)'}`,
+                    }}
+                  >
+                    {level}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Key details */}
+        {analysis.key_details?.length > 0 && (
+          <div className="pt-2 border-t border-white/5">
+            <span className="text-[10px] font-bold uppercase tracking-widest text-white/40 block mb-3">
+              Key Details
+            </span>
+            <ul className="space-y-2">
+              {analysis.key_details.map((d, i) => (
+                <li key={i} className="text-sm font-medium text-white/80 flex gap-3 items-start">
+                  <span className="text-indigo-400/50 text-xs mt-0.5">▪</span>
+                  <span className="leading-relaxed">{d}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {/* Cultural context */}
+        {analysis.cultural_context && (
+          <div className="p-4 rounded-xl bg-purple-500/5 border border-purple-500/10 shadow-inner">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-purple-400 text-sm">💡</span>
+              <span className="text-[10px] font-bold uppercase tracking-widest text-purple-300">
+                Cultural Context
+              </span>
+            </div>
+            <p className="text-sm text-purple-100/70 leading-relaxed font-medium">
+              {analysis.cultural_context}
+            </p>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
 
-
-/**
- * EditableField — Inline editable info block with visual diff.
- */
 function EditableField({ label, value, isEditing, isEdited, onChange }) {
   return (
-    <div className="space-y-0.5">
-      <span className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">
+    <div className="flex flex-col gap-1.5 p-3 rounded bg-white/[0.02] border border-white/5">
+      <span className="text-[8px] font-black uppercase tracking-[0.2em] text-white/20 flex items-center gap-1.5">
         {label}
         {isEdited && (
-          <span className="ml-1 text-[var(--color-listening)]">•</span>
+          <span className="w-1 h-1 rounded-full bg-indigo-400 animate-pulse" />
         )}
       </span>
       {isEditing ? (
@@ -255,17 +267,14 @@ function EditableField({ label, value, isEditing, isEdited, onChange }) {
           type="text"
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          className="w-full px-2 py-1 rounded text-sm bg-[var(--color-elevated)] border transition-colors
-            text-[var(--color-text-primary)] focus:outline-none focus:border-[var(--color-listening)]"
-          style={{
-            borderColor: isEdited ? 'rgba(99, 102, 241, 0.3)' : 'var(--color-glass-border)',
-          }}
+          className="w-full bg-black/40 border border-indigo-500/30 rounded px-2 py-1 text-[11px] font-bold text-indigo-100 outline-none focus:border-indigo-500"
         />
       ) : (
-        <p className={`text-sm capitalize ${isEdited ? 'text-[var(--color-listening)]' : 'text-[var(--color-text-primary)]'}`}>
+        <p className={`text-[10px] font-black uppercase tracking-wider truncate ${isEdited ? 'text-indigo-400' : 'text-white/70'}`}>
           {value}
         </p>
       )}
     </div>
   );
 }
+

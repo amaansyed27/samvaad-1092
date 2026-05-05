@@ -1,16 +1,6 @@
 import { useState } from 'react';
 import { useMicrophone } from '../hooks/useMicrophone';
 
-/**
- * SimulatorPanel — Combined Microphone + Text simulator and control panel.
- *
- * Features:
- *   - Live microphone recording with audio level visualiser
- *   - Text-based transcript input (simulator mode)
- *   - Restatement display with TTS playback controls
- *   - Manual takeover button (emergency escalation)
- *   - Confirmation buttons (verified / incorrect)
- */
 export default function SimulatorPanel({
   onSendTranscript,
   onSendConfirm,
@@ -23,7 +13,7 @@ export default function SimulatorPanel({
   languageCode,
 }) {
   const [text, setText] = useState('');
-  const [mode, setMode] = useState('text'); // 'text' | 'mic'
+  const [mode, setMode] = useState('mic'); // 'text' | 'mic'
 
   const { isRecording, audioLevel, error: micError, startRecording, stopRecording } = useMicrophone({
     onAudioChunk: (base64Data) => {
@@ -69,170 +59,135 @@ export default function SimulatorPanel({
   const isTerminal = state === 'VERIFIED' || state === 'HUMAN_TAKEOVER';
   const isActive = !isTerminal && state !== 'INIT';
 
-  // Map language codes to display names
-  const langName = {
-    'kn-IN': 'Kannada', 'hi-IN': 'Hindi', 'en-IN': 'English',
-    'unknown': 'Detecting…',
-  }[languageCode] || languageCode || 'Detecting…';
-
   return (
-    <div className="glass-card p-5 space-y-4 flex flex-col">
+    <div className="glass-card flex flex-col h-full bg-black/20 border-white/5 shadow-2xl relative overflow-hidden">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <h3 className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-secondary)]">
-          Call Interface
-        </h3>
-        <div className="flex items-center gap-3">
-          {/* Language indicator */}
-          {isActive && (
-            <span className="status-badge" style={{
-              background: 'rgba(139, 92, 246, 0.08)',
-              color: 'var(--color-analyzing)',
-              border: '1px solid rgba(139, 92, 246, 0.12)',
-            }}>
-              🌐 {langName}
-            </span>
-          )}
-          <div className="flex items-center gap-1.5">
-            <div
-              className="w-2 h-2 rounded-full"
-              style={{ background: connected ? 'var(--color-verified)' : 'var(--color-critical)' }}
-            />
-            <span className="text-[10px] text-[var(--color-text-muted)]">
-              {connected ? 'Connected' : 'Disconnected'}
-            </span>
-          </div>
+      <div className="flex-none flex items-center justify-between px-6 py-5 border-b border-white/5 bg-white/[0.01]">
+        <div className="flex flex-col">
+          <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-white/40">
+            Emergency Diagnostics
+          </h3>
+          <span className="text-[8px] text-white/10 uppercase tracking-widest font-bold mt-0.5">Real-time LLM Inference</span>
         </div>
+        
+        {/* Mode toggle */}
+        {!isTerminal && (
+          <div className="flex rounded bg-black/60 border border-white/10 p-0.5">
+            <button
+              onClick={() => setMode('mic')}
+              className={`px-3 py-1 text-[9px] font-black uppercase tracking-widest transition-all duration-300 rounded ${mode === 'mic' ? 'bg-red-500/20 text-red-400' : 'text-white/20 hover:text-white/40'}`}
+            >
+              Hardware
+            </button>
+            <button
+              onClick={() => setMode('text')}
+              className={`px-3 py-1 text-[9px] font-black uppercase tracking-widest transition-all duration-300 rounded ${mode === 'text' ? 'bg-indigo-500/20 text-indigo-400' : 'text-white/20 hover:text-white/40'}`}
+            >
+              Simulator
+            </button>
+          </div>
+        )}
       </div>
 
-      {/* Mode toggle */}
-      {!isTerminal && (
-        <div className="flex rounded-lg overflow-hidden border border-[var(--color-glass-border)]">
-          <button
-            onClick={() => setMode('text')}
-            className="flex-1 py-1.5 text-[10px] font-semibold uppercase tracking-wider transition-all duration-200"
-            style={{
-              background: mode === 'text' ? 'rgba(99, 102, 241, 0.1)' : 'transparent',
-              color: mode === 'text' ? 'var(--color-listening)' : 'var(--color-text-muted)',
-            }}
-          >
-            📝 Text Simulator
-          </button>
-          <button
-            onClick={() => setMode('mic')}
-            className="flex-1 py-1.5 text-[10px] font-semibold uppercase tracking-wider transition-all duration-200"
-            style={{
-              background: mode === 'mic' ? 'rgba(239, 68, 68, 0.1)' : 'transparent',
-              color: mode === 'mic' ? 'var(--color-critical)' : 'var(--color-text-muted)',
-            }}
-          >
-            🎙 Live Mic
-          </button>
-        </div>
-      )}
 
-      {/* Restatement display */}
-      {restatement && isWaiting && (
-        <div className="p-4 rounded-lg bg-[rgba(99,102,241,0.06)] border border-[rgba(99,102,241,0.15)] animate-slide-up">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-[10px] uppercase tracking-wider text-[var(--color-listening)]">
-              AI Restatement — Awaiting Confirmation
-            </span>
-            {ttsAudio && (
+      <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar flex flex-col">
+        
+        {/* Restatement display */}
+        {restatement && isWaiting && (
+          <div className="p-5 rounded-xl bg-indigo-500/10 border border-indigo-500/20 shadow-inner animate-slide-up flex-shrink-0">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-[10px] font-bold uppercase tracking-widest text-indigo-400">
+                AI Restatement
+              </span>
+              {ttsAudio && (
+                <button
+                  onClick={handleReplayTTS}
+                  className="px-3 py-1 rounded bg-indigo-500/20 text-[10px] font-bold tracking-wider text-indigo-300 hover:bg-indigo-500/30 transition-colors uppercase"
+                >
+                  🔊 Replay TTS
+                </button>
+              )}
+            </div>
+            <p className="text-sm text-indigo-100 font-medium leading-relaxed italic border-l-2 border-indigo-500/50 pl-3">
+              "{restatement}"
+            </p>
+            <div className="mt-4 flex gap-3">
               <button
-                onClick={handleReplayTTS}
-                className="text-[10px] text-[var(--color-listening)] hover:text-[var(--color-text-primary)] transition-colors"
-                title="Replay TTS audio"
+                onClick={() => onSendConfirm(true)}
+                className="flex-1 py-2 rounded-lg text-xs font-bold uppercase tracking-widest transition-all duration-200 shadow-lg hover:scale-[1.02] active:scale-[0.98]"
+                style={{
+                  background: 'rgba(45, 212, 160, 0.15)',
+                  color: '#2dd4a0',
+                  border: '1px solid rgba(45, 212, 160, 0.3)',
+                  boxShadow: '0 0 15px rgba(45,212,160,0.1)'
+                }}
               >
-                🔊 Replay
+                ✓ Confirmed
               </button>
-            )}
+              <button
+                onClick={() => onSendConfirm(false)}
+                className="flex-1 py-2 rounded-lg text-xs font-bold uppercase tracking-widest transition-all duration-200 shadow-lg hover:scale-[1.02] active:scale-[0.98]"
+                style={{
+                  background: 'rgba(239, 68, 68, 0.15)',
+                  color: '#ef4444',
+                  border: '1px solid rgba(239, 68, 68, 0.3)',
+                  boxShadow: '0 0 15px rgba(239,68,68,0.1)'
+                }}
+              >
+                ✗ Incorrect
+              </button>
+            </div>
           </div>
-          <p className="text-sm text-[var(--color-text-primary)] leading-relaxed italic">
-            "{restatement}"
-          </p>
-          <div className="mt-3 flex gap-2">
-            <button
-              onClick={() => onSendConfirm(true)}
-              className="px-4 py-1.5 rounded-lg text-xs font-semibold uppercase tracking-wider transition-all duration-200
-                hover:scale-[1.02] active:scale-[0.98]"
-              style={{
-                background: 'rgba(45, 212, 160, 0.12)',
-                color: 'var(--color-verified)',
-                border: '1px solid rgba(45, 212, 160, 0.2)',
-              }}
-            >
-              ✓ Confirmed
-            </button>
-            <button
-              onClick={() => onSendConfirm(false)}
-              className="px-4 py-1.5 rounded-lg text-xs font-semibold uppercase tracking-wider transition-all duration-200
-                hover:scale-[1.02] active:scale-[0.98]"
-              style={{
-                background: 'rgba(239, 68, 68, 0.12)',
-                color: 'var(--color-critical)',
-                border: '1px solid rgba(239, 68, 68, 0.2)',
-              }}
-            >
-              ✗ Incorrect
-            </button>
-          </div>
-        </div>
-      )}
+        )}
 
-      {/* ── Input Area ─────────────────────────────────────────────────── */}
-      {!isTerminal && mode === 'text' && (
-        <div className="space-y-2 flex-1">
-          <label className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)]">
-            Simulate Caller Speech
-          </label>
-          <div className="flex gap-2">
+        {/* ── Input Area ─────────────────────────────────────────────────── */}
+        {!isTerminal && mode === 'text' && (
+          <div className="flex-1 flex flex-col justify-center">
+            <span className="text-[10px] font-bold uppercase tracking-widest text-white/40 mb-2">
+              Text Input Simulator
+            </span>
             <textarea
               value={text}
               onChange={(e) => setText(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="Type caller transcript here… (Kannada, Hindi, or English)"
-              rows={2}
-              className="flex-1 px-3 py-2 rounded-lg text-sm bg-[var(--color-elevated)] border border-[var(--color-glass-border)]
-                text-[var(--color-text-primary)] placeholder:text-[var(--color-text-muted)]
-                focus:outline-none focus:border-[var(--color-listening)] transition-colors resize-none"
+              className="w-full h-32 px-4 py-3 rounded-xl text-sm font-medium bg-black/40 border border-white/10
+                text-white/90 placeholder:text-white/20 focus:outline-none focus:border-indigo-500/50 shadow-inner resize-none transition-colors"
             />
             <button
               onClick={handleSend}
               disabled={!text.trim() || !connected}
-              className="px-4 rounded-lg text-xs font-semibold uppercase tracking-wider transition-all duration-200
-                hover:scale-[1.02] active:scale-[0.98] disabled:opacity-30 disabled:pointer-events-none"
+              className="mt-3 w-full py-3 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all duration-200
+                hover:bg-indigo-500/20 active:scale-[0.98] disabled:opacity-30 disabled:pointer-events-none"
               style={{
-                background: 'rgba(99, 102, 241, 0.12)',
-                color: 'var(--color-listening)',
-                border: '1px solid rgba(99, 102, 241, 0.2)',
+                background: 'rgba(99, 102, 241, 0.15)',
+                color: '#818cf8',
+                border: '1px solid rgba(99, 102, 241, 0.3)',
               }}
             >
-              Send
+              Send Transcript
             </button>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* ── Microphone Mode ───────────────────────────────────────────── */}
-      {!isTerminal && mode === 'mic' && (
-        <div className="space-y-3 flex-1">
-          <div className="flex flex-col items-center gap-3 py-4">
-            {/* Audio level visualiser */}
-            <div className="relative w-20 h-20 flex items-center justify-center">
+        {/* ── Microphone Mode ───────────────────────────────────────────── */}
+        {!isTerminal && mode === 'mic' && (
+          <div className="flex-1 flex flex-col items-center justify-center">
+            <div className="relative w-32 h-32 flex items-center justify-center mb-6">
               {/* Pulsing rings */}
               {isRecording && (
                 <>
                   <div
-                    className="absolute inset-0 rounded-full animate-ping opacity-10"
-                    style={{ background: 'var(--color-critical)', animationDuration: '1.5s' }}
+                    className="absolute inset-0 rounded-full animate-ping opacity-20"
+                    style={{ background: '#ef4444', animationDuration: '1.5s' }}
                   />
                   <div
-                    className="absolute rounded-full transition-all duration-200"
+                    className="absolute rounded-full transition-all duration-150"
                     style={{
-                      inset: `${20 - audioLevel * 20}px`,
-                      background: `rgba(239, 68, 68, ${0.1 + audioLevel * 0.2})`,
+                      inset: `${(1 - audioLevel) * 20}px`,
+                      background: `rgba(239, 68, 68, ${0.1 + audioLevel * 0.4})`,
                       borderRadius: '50%',
+                      boxShadow: `0 0 ${20 + audioLevel * 40}px rgba(239,68,68,0.4)`
                     }}
                   />
                 </>
@@ -241,70 +196,80 @@ export default function SimulatorPanel({
               <button
                 onClick={isRecording ? stopRecording : startRecording}
                 disabled={!connected}
-                className="relative z-10 w-14 h-14 rounded-full flex items-center justify-center transition-all duration-300
-                  hover:scale-105 active:scale-95 disabled:opacity-30"
+                className="relative z-10 w-20 h-20 rounded-full flex items-center justify-center transition-all duration-300
+                  hover:scale-105 active:scale-95 disabled:opacity-30 disabled:hover:scale-100"
                 style={{
-                  background: isRecording
-                    ? 'rgba(239, 68, 68, 0.2)'
-                    : 'rgba(99, 102, 241, 0.12)',
-                  border: `2px solid ${isRecording ? 'var(--color-critical)' : 'var(--color-listening)'}`,
+                  background: isRecording ? 'rgba(239, 68, 68, 0.2)' : 'rgba(255,255,255,0.05)',
+                  border: `2px solid ${isRecording ? '#ef4444' : 'rgba(255,255,255,0.1)'}`,
+                  boxShadow: isRecording ? '0 0 30px rgba(239,68,68,0.3)' : '0 10px 25px rgba(0,0,0,0.5)',
                 }}
               >
-                <span className="text-xl">{isRecording ? '⏹' : '🎙'}</span>
+                <span className="text-3xl drop-shadow-lg">{isRecording ? '⏹' : '🎙'}</span>
               </button>
             </div>
-            <span className="text-[10px] text-[var(--color-text-muted)] uppercase tracking-wider">
-              {isRecording ? 'Recording… Tap to stop' : 'Tap to start recording'}
-            </span>
-            {micError && (
-              <span className="text-[10px] text-[var(--color-critical)]">
-                ⚠ {micError}
+            
+            <div className="flex flex-col items-center gap-2">
+              <span className={`text-xs font-bold uppercase tracking-widest ${isRecording ? 'text-red-400 animate-pulse' : 'text-white/40'}`}>
+                {isRecording ? 'Recording Live Audio' : 'Tap to Start Recording'}
               </span>
-            )}
+              {isRecording && (
+                <span className="text-[10px] text-red-400/60 uppercase tracking-widest">
+                  Transmitting PCM chunks...
+                </span>
+              )}
+              {micError && (
+                <span className="text-[10px] text-red-400 bg-red-500/10 px-3 py-1 rounded-full border border-red-500/20 mt-2">
+                  ⚠ {micError}
+                </span>
+              )}
+            </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* ── Manual Takeover Button ──────────────────────────────────── */}
-      {isActive && !isTerminal && (
-        <button
-          onClick={() => onSendTakeover?.('Agent initiated manual takeover')}
-          className="w-full py-2 rounded-lg text-xs font-semibold uppercase tracking-wider transition-all duration-200
-            hover:scale-[1.01] active:scale-[0.99]"
-          style={{
-            background: 'rgba(239, 68, 68, 0.06)',
-            color: 'var(--color-critical)',
-            border: '1px solid rgba(239, 68, 68, 0.15)',
-          }}
-        >
-          ⚠ Manual Takeover
-        </button>
-      )}
+        {/* ── Manual Takeover Button ──────────────────────────────────── */}
+        <div className="mt-auto pt-4 border-t border-white/5">
+          {isActive && !isTerminal && (
+            <button
+              onClick={() => onSendTakeover?.('Agent initiated manual takeover')}
+              className="w-full py-3 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all duration-200
+                hover:scale-[1.01] active:scale-[0.99] shadow-lg"
+              style={{
+                background: 'rgba(239, 68, 68, 0.1)',
+                color: '#ef4444',
+                border: '1px solid rgba(239, 68, 68, 0.3)',
+                boxShadow: '0 0 15px rgba(239,68,68,0.1)'
+              }}
+            >
+              ⚠ Initiate Manual Takeover
+            </button>
+          )}
 
-      {/* Terminal states */}
-      {state === 'VERIFIED' && (
-        <div className="p-4 rounded-lg bg-[rgba(45,212,160,0.08)] border border-[rgba(45,212,160,0.15)] text-center animate-slide-up">
-          <span className="text-lg">✅</span>
-          <p className="mt-1 text-sm font-semibold" style={{ color: 'var(--color-verified)' }}>
-            Call Verified Successfully
-          </p>
-          <p className="mt-1 text-xs text-[var(--color-text-muted)]">
-            Understanding confirmed. Call can proceed to dispatch.
-          </p>
-        </div>
-      )}
+          {/* Terminal states */}
+          {state === 'VERIFIED' && (
+            <div className="p-5 rounded-xl bg-[#2dd4a0]/10 border border-[#2dd4a0]/20 text-center animate-slide-up shadow-[0_0_20px_rgba(45,212,160,0.1)]">
+              <span className="text-3xl drop-shadow-lg mb-2 block">✅</span>
+              <p className="text-sm font-bold uppercase tracking-widest text-[#2dd4a0]">
+                Verified Successfully
+              </p>
+              <p className="mt-2 text-xs text-[#2dd4a0]/60 font-medium">
+                Intent confirmed. Escalating to dispatch.
+              </p>
+            </div>
+          )}
 
-      {state === 'HUMAN_TAKEOVER' && (
-        <div className="p-4 rounded-lg bg-[rgba(239,68,68,0.08)] border border-[rgba(239,68,68,0.15)] text-center animate-slide-up">
-          <span className="text-lg">⚠</span>
-          <p className="mt-1 text-sm font-semibold" style={{ color: 'var(--color-critical)' }}>
-            Human Agent Takeover
-          </p>
-          <p className="mt-1 text-xs text-[var(--color-text-muted)]">
-            Call has been escalated to a human operator.
-          </p>
+          {state === 'HUMAN_TAKEOVER' && (
+            <div className="p-5 rounded-xl bg-red-500/10 border border-red-500/20 text-center animate-slide-up shadow-[0_0_20px_rgba(239,68,68,0.1)]">
+              <span className="text-3xl drop-shadow-lg mb-2 block">⚠</span>
+              <p className="text-sm font-bold uppercase tracking-widest text-red-400">
+                Agent Takeover
+              </p>
+              <p className="mt-2 text-xs text-red-400/60 font-medium">
+                AI bypassed. Human operator in control.
+              </p>
+            </div>
+          )}
         </div>
-      )}
+      </div>
     </div>
   );
 }

@@ -9,7 +9,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
  * @param {string} url - WebSocket URL (defaults to /ws/call via Vite proxy)
  * @returns {object} Complete call state and control methods
  */
-export function useCallSocket(url = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/call`) {
+export function useCallSocket(url = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/dashboard`) {
   const [connected, setConnected] = useState(false);
   const [callId, setCallId] = useState(null);
   const [state, setState] = useState('INIT');
@@ -22,13 +22,22 @@ export function useCallSocket(url = `${location.protocol === 'https:' ? 'wss' : 
   const [piiCount, setPiiCount] = useState(0);
   const [liveTranscript, setLiveTranscript] = useState('');
   const [languageCode, setLanguageCode] = useState('unknown');
+  const [location, setLocation] = useState(null);
+  const [mlRouting, setMlRouting] = useState(null);
+
   const wsRef = useRef(null);
   const reconnectTimer = useRef(null);
+  
+  // Create a ref for the latest callId to avoid stale closures in send()
+  const callIdRef = useRef(null);
 
   const handleEvent = useCallback((data) => {
     setEvents((prev) => [...prev.slice(-99), data]); // keep last 100
 
-    if (data.call_id) setCallId(data.call_id);
+    if (data.call_id) {
+        setCallId(data.call_id);
+        callIdRef.current = data.call_id;
+    }
 
     switch (data.event) {
       case 'state_change':
@@ -45,6 +54,11 @@ export function useCallSocket(url = `${location.protocol === 'https:' ? 'wss' : 
       case 'transcript_received':
         setLiveTranscript(data.transcript || '');
         if (data.language_code) setLanguageCode(data.language_code);
+        if (data.ml_routing) setMlRouting(data.ml_routing);
+        break;
+
+      case 'ml_routing_update':
+        setMlRouting(data.ml_routing);
         break;
 
       case 'restatement':
@@ -60,7 +74,15 @@ export function useCallSocket(url = `${location.protocol === 'https:' ? 'wss' : 
       case 'VERIFIED':
         setState('VERIFIED');
         setConfidence(data.confidence);
+        if (data.tts_audio) {
+            playTtsAudio(data.tts_audio);
+        }
         break;
+
+      case 'location_update':
+        setLocation(data.location);
+        break;
+
 
       case 'SAFE_HUMAN_TAKEOVER':
         setState('HUMAN_TAKEOVER');
@@ -131,7 +153,11 @@ export function useCallSocket(url = `${location.protocol === 'https:' ? 'wss' : 
 
   const send = useCallback((data) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify(data));
+      const payload = { ...data };
+      if (callIdRef.current && !payload.call_id) {
+          payload.call_id = callIdRef.current;
+      }
+      wsRef.current.send(JSON.stringify(payload));
     }
   }, []);
 
@@ -168,6 +194,9 @@ export function useCallSocket(url = `${location.protocol === 'https:' ? 'wss' : 
     piiCount,
     liveTranscript,
     languageCode,
+    location,
+    mlRouting,
+
     send,
     sendTranscript,
     sendConfirm,

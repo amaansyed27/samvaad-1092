@@ -1,11 +1,5 @@
 import { useEffect, useRef } from 'react';
 
-/**
- * TranscriptPanel — Real-time scrolling transcript with PII highlighting.
- *
- * Displays a live feed of events from the verification pipeline, styled
- * as a minimal monochrome log with glassmorphism.
- */
 export default function TranscriptPanel({ events = [], scrubbed = '', piiCount = 0 }) {
   const scrollRef = useRef(null);
 
@@ -16,60 +10,70 @@ export default function TranscriptPanel({ events = [], scrubbed = '', piiCount =
   }, [events]);
 
   return (
-    <div className="glass-card flex flex-col h-full">
+    <div className="glass-card flex flex-col h-full bg-black/20 border-white/5 shadow-2xl">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--color-glass-border)]">
-        <div className="flex items-center gap-2">
-          <div className="w-2 h-2 rounded-full bg-[var(--color-listening)]" style={{ animation: events.length > 0 ? 'pulse-dot 2s infinite' : 'none' }} />
-          <span className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-secondary)]">
+      <div className="flex-none flex items-center justify-between px-6 py-4 border-b border-white/5 bg-white/[0.02]">
+        <div className="flex items-center gap-3">
+          <div className="relative flex h-2.5 w-2.5">
+            {events.length > 0 && <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>}
+            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-indigo-500"></span>
+          </div>
+          <span className="text-xs font-bold uppercase tracking-widest text-white/60 drop-shadow-sm">
             Live Transcript
           </span>
         </div>
         {piiCount > 0 && (
-          <span className="status-badge" style={{ background: 'rgba(245, 165, 36, 0.12)', color: 'var(--color-warning)' }}>
-            🛡 {piiCount} PII Redacted
-          </span>
+          <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-orange-500/10 border border-orange-500/20 shadow-[0_0_10px_rgba(249,115,22,0.1)]">
+            <span className="text-orange-400 text-xs font-bold tracking-wider uppercase">
+              🛡 {piiCount} PII Redacted
+            </span>
+          </div>
         )}
       </div>
 
-      {/* Scrollable log */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto p-3 space-y-1" style={{ maxHeight: '360px' }}>
+      <div ref={scrollRef} className="flex-1 overflow-y-auto px-8 py-6 space-y-4 custom-scrollbar bg-black/20">
         {events.length === 0 ? (
-          <div className="flex items-center justify-center h-full text-[var(--color-text-muted)] text-sm">
-            Waiting for call connection…
+          <div className="flex flex-col items-center justify-center h-full gap-4 text-white/10">
+             <div className="w-16 h-16 rounded-full border border-white/5 flex items-center justify-center animate-pulse">
+               <span className="text-2xl">📡</span>
+             </div>
+             <span className="text-[10px] font-black uppercase tracking-[0.3em]">Monitoring Radio Waves</span>
           </div>
         ) : (
           events.map((ev, i) => (
             <div
               key={i}
-              className={`transcript-line text-xs font-mono animate-slide-up ${
-                ev.event === 'SAFE_HUMAN_TAKEOVER' ? 'border-l-[var(--color-critical)]' :
-                ev.event === 'VERIFIED' ? 'border-l-[var(--color-verified)]' : ''
-              }`}
-              style={{
-                animationDelay: `${Math.min(i * 30, 300)}ms`,
-                borderLeftColor:
-                  ev.event === 'SAFE_HUMAN_TAKEOVER' ? 'var(--color-critical)' :
-                  ev.event === 'VERIFIED' ? 'var(--color-verified)' : undefined,
-              }}
+              className={`group relative flex gap-6 items-start transition-all duration-500 animate-slide-up`}
+              style={{ animationDelay: `${Math.min(i * 30, 300)}ms` }}
             >
-              <span className="text-[var(--color-text-muted)] mr-2">
-                {new Date(ev.timestamp || Date.now()).toLocaleTimeString('en-IN', { hour12: false })}
-              </span>
-              <span className="text-[var(--color-text-secondary)]">
-                {formatEvent(ev)}
-              </span>
+              {/* Time indicator */}
+              <div className="flex-none w-16 pt-1">
+                <span className="text-[9px] font-mono text-white/20 font-bold tracking-tighter">
+                  {new Date(ev.timestamp || Date.now()).toLocaleTimeString('en-IN', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                </span>
+              </div>
+              
+              {/* Content */}
+              <div className={`flex-1 pb-4 border-l border-white/5 pl-6 group-last:border-transparent`}>
+                <div className="text-[11px] leading-relaxed text-white/60 font-medium">
+                  {formatEvent(ev)}
+                </div>
+              </div>
             </div>
           ))
         )}
 
+
         {/* Show scrubbed transcript if available */}
         {scrubbed && (
-          <div className="mt-3 p-3 rounded-lg bg-[rgba(255,255,255,0.02)] border border-[var(--color-glass-border)]">
-            <div className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)] mb-1.5">
-              Scrubbed Transcript
+          <div className="mt-6 p-5 rounded-xl bg-indigo-500/5 border border-indigo-500/10 shadow-inner">
+            <div className="flex items-center gap-2 mb-3">
+              <span className="text-indigo-400">🛡</span>
+              <span className="text-[10px] font-bold uppercase tracking-widest text-indigo-300">
+                Scrubbed Transcript
+              </span>
             </div>
-            <p className="text-xs text-[var(--color-text-primary)] leading-relaxed">
+            <p className="text-sm text-indigo-100/70 leading-relaxed font-medium">
               {scrubbed}
             </p>
           </div>
@@ -82,17 +86,27 @@ export default function TranscriptPanel({ events = [], scrubbed = '', piiCount =
 function formatEvent(ev) {
   switch (ev.event) {
     case 'state_change':
-      return `→ ${ev.state}${ev.pii_count ? ` (${ev.pii_count} PII scrubbed)` : ''}`;
+      return <span className="text-indigo-400/80 font-bold tracking-widest uppercase text-[9px]">→ {ev.state} ACTIVE</span>;
     case 'audio_processed':
-      return `♪ Distress: ${(ev.distress?.score * 100 || 0).toFixed(0)}% [${ev.distress?.level || '-'}]`;
+      return <span className="text-white/40">ACOUSTIC PROFILING: <span className="text-white/80">{(ev.distress?.score * 100 || 0).toFixed(0)}% DISTRESS DETECTED</span></span>;
+    case 'transcript_received':
+      return <span className="text-white/90">"{ev.transcript}" <span className="text-white/20 uppercase text-[8px] ml-2">[{ev.language_code || '??'}]</span></span>;
     case 'restatement':
-      return `💬 "${ev.restatement}"`;
+      return <span className="text-sky-400 font-medium italic">AI RESTATEMENT: "{ev.restatement}"</span>;
     case 'VERIFIED':
-      return `✅ VERIFIED — Confidence ${(ev.confidence * 100).toFixed(0)}%`;
+      return (
+        <div className="p-4 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-400">
+          <span className="font-black uppercase tracking-widest block mb-1">✓ CALL VERIFIED</span>
+          <p className="text-[10px] opacity-80">{ev.dispatch_message}</p>
+        </div>
+      );
+    case 'location_update':
+      return <span className="text-amber-400 uppercase text-[9px] font-black">📍 GPS LOCK: {ev.location.city || 'UNCERTAIN'}</span>;
+
     case 'SAFE_HUMAN_TAKEOVER':
-      return `⚠ HUMAN TAKEOVER — ${ev.reason}`;
+      return <span className="text-[#ef4444] font-bold">⚠ HUMAN TAKEOVER — {ev.reason}</span>;
     case 'error':
-      return `❌ ${ev.message}`;
+      return <span className="text-[#ef4444]">❌ {ev.message}</span>;
     default:
       return JSON.stringify(ev);
   }

@@ -1,208 +1,95 @@
+
+import { useState } from 'react';
 import './index.css';
 import { useCallSocket } from './hooks/useCallSocket';
-import RadialGauge from './components/RadialGauge';
-import StateTimeline from './components/StateTimeline';
-import TranscriptPanel from './components/TranscriptPanel';
-import AnalysisCard from './components/AnalysisCard';
-import SimulatorPanel from './components/SimulatorPanel';
+import LiveTerminal from './components/LiveTerminal';
+import AnalyticsOverview from './components/AnalyticsOverview';
+import GrievanceInbox from './components/GrievanceInbox';
+import { BarChart2, Inbox, PhoneCall, Bug } from 'lucide-react';
 
-/**
- * App — Samvaad 1092 Operator Dashboard
- *
- * Minimalist monochrome glassmorphism interface designed for
- * low cognitive load during emergency call handling.
- *
- * Layout:
- *   ┌─────────────────────────────────────────────────┐
- *   │                  Header Bar                      │
- *   ├────────────┬────────────────────┬────────────────┤
- *   │  Distress  │                    │  Confidence    │
- *   │   Gauge    │  State Timeline    │    Gauge       │
- *   ├────────────┼────────────────────┼────────────────┤
- *   │            │                    │                │
- *   │ Transcript │   Analysis Card    │  Simulator     │
- *   │   Panel    │   (Editable)       │   Panel        │
- *   │            │                    │                │
- *   └────────────┴────────────────────┴────────────────┘
- */
 export default function App() {
-  const {
-    connected,
-    callId,
-    state,
-    events,
-    distress,
-    analysis,
-    restatement,
-    ttsAudio,
-    confidence,
-    piiCount,
-    liveTranscript,
-    languageCode,
-    sendTranscript,
-    sendConfirm,
-    sendAudio,
-    sendTakeover,
-    sendAgentEdit,
-  } = useCallSocket();
+  const [activeTab, setActiveTab] = useState('overview');
+  const [debugMode, setDebugMode] = useState(false);
+
+  const socketProps = useCallSocket();
+
+  // Automatically switch to Live Terminal if a real call comes in
+  if (socketProps.state !== 'INIT' && activeTab !== 'live' && !debugMode && socketProps.connected) {
+      // Small timeout to prevent render cycle issues
+      setTimeout(() => setActiveTab('live'), 10);
+  }
 
   return (
-    <div className="h-screen flex flex-col bg-[var(--color-void)] overflow-hidden">
-      {/* ── Header ─────────────────────────────────────────────────────── */}
-      <header className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-glass-border)]">
-        <div className="flex items-center gap-4">
-          {/* Logo / Title */}
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-[rgba(99,102,241,0.15)] flex items-center justify-center">
-              <span className="text-base">📞</span>
-            </div>
-            <div>
-              <h1 className="text-sm font-semibold tracking-wide text-[var(--color-text-primary)]">
-                SAMVAAD 1092
-              </h1>
-              <p className="text-[10px] text-[var(--color-text-muted)] uppercase tracking-widest">
-                Karnataka Emergency Helpline
-              </p>
+    <div className="h-screen flex bg-[#030304] overflow-hidden font-sans">
+      
+      {/* ── Sidebar Navigation ── */}
+      <nav className="w-20 flex-none bg-black/80 border-r border-white/5 flex flex-col items-center py-6 gap-8 z-30">
+        <div className="w-10 h-10 rounded-xl bg-indigo-500/20 border border-indigo-500/40 flex items-center justify-center mb-4 shadow-[0_0_15px_rgba(99,102,241,0.2)]">
+          <div className="w-2 h-2 rounded-full bg-indigo-400 animate-pulse" />
+        </div>
+        
+        <NavButton icon={<BarChart2 />} active={activeTab === 'overview'} onClick={() => setActiveTab('overview')} label="Overview" />
+        <NavButton icon={<Inbox />} active={activeTab === 'inbox'} onClick={() => setActiveTab('inbox')} label="Inbox" />
+        <NavButton icon={<PhoneCall />} active={activeTab === 'live'} onClick={() => setActiveTab('live')} label="Live Call" pulse={socketProps.state !== 'INIT'} />
+
+        <div className="mt-auto pt-8 border-t border-white/5 w-full flex justify-center">
+          <button 
+            onClick={() => setDebugMode(!debugMode)}
+            title="Toggle Debug / Demo Mode"
+            className={`p-3 rounded-xl transition-all ${debugMode ? 'bg-amber-500/20 text-amber-400 border-amber-500/30 border shadow-inner' : 'text-white/30 hover:text-white/60 hover:bg-white/5'}`}
+          >
+            <Bug className="w-5 h-5" />
+          </button>
+        </div>
+      </nav>
+
+      {/* ── Main Content Area ── */}
+      <div className="flex-1 flex flex-col min-w-0">
+        <header className="flex-none h-16 flex items-center justify-between px-8 bg-black/60 border-b border-white/5 backdrop-blur-xl z-20">
+          <div>
+            <h1 className="text-xs font-black tracking-[0.3em] text-white/90 uppercase">
+              Samvaad <span className="text-indigo-400">1092</span>
+            </h1>
+            <p className="text-[8px] text-white/30 font-bold tracking-widest uppercase">Civic Grievance Management System</p>
+          </div>
+          
+          <div className="flex items-center gap-6">
+            <div className="flex items-center gap-3 px-4 py-2 rounded-full bg-white/[0.02] border border-white/5 shadow-inner">
+               <span className="text-[10px] font-black tracking-widest text-white/40 uppercase">{socketProps.state}</span>
+               <div className={`w-1.5 h-1.5 rounded-full ${socketProps.connected ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-red-500'}`} />
+               <span className={`text-[10px] font-black tracking-widest ${socketProps.connected ? 'text-emerald-400' : 'text-red-400'} uppercase`}>
+                 {socketProps.connected ? 'Gateway Active' : 'Disconnected'}
+               </span>
             </div>
           </div>
+        </header>
 
-          {/* Call ID badge */}
-          {callId && (
-            <div className="status-badge ml-4" style={{ background: 'var(--color-glass)', border: '1px solid var(--color-glass-border)' }}>
-              <span className="text-[var(--color-text-muted)]">Call</span>
-              <span className="font-mono text-[var(--color-text-secondary)]">{callId}</span>
-            </div>
-          )}
-
-          {/* Language badge */}
-          {languageCode && languageCode !== 'unknown' && (
-            <div className="status-badge" style={{
-              background: 'rgba(139, 92, 246, 0.08)',
-              border: '1px solid rgba(139, 92, 246, 0.15)',
-            }}>
-              <span className="text-[var(--color-analyzing)]">🌐 {languageCode}</span>
-            </div>
-          )}
-        </div>
-
-        {/* Connection status */}
-        <div className="flex items-center gap-3">
-          <span className="text-[10px] text-[var(--color-text-muted)] uppercase tracking-wider">
-            {state}
-          </span>
-          <div className="flex items-center gap-1.5">
-            <div
-              className="w-2 h-2 rounded-full transition-colors duration-300"
-              style={{ background: connected ? 'var(--color-verified)' : 'var(--color-critical)' }}
-            />
-            <span className="text-[10px] text-[var(--color-text-muted)]">
-              {connected ? 'Live' : 'Offline'}
-            </span>
-          </div>
-        </div>
-      </header>
-
-      {/* ── Main Content ───────────────────────────────────────────────── */}
-      <main className="flex-1 p-4 overflow-hidden flex flex-col gap-4">
-        {/* Row 1: Gauges + State Timeline */}
-        <div className="flex gap-4 items-stretch">
-          {/* Distress Gauge */}
-          <div className="glass-card p-5 flex flex-col items-center justify-center" style={{ minWidth: 200 }}>
-            <RadialGauge
-              value={distress.score}
-              label="Distress"
-              sublabel={distress.level}
-              color="var(--color-verified)"
-              thresholds={[
-                { at: 0.35, color: 'var(--color-warning)' },
-                { at: 0.60, color: '#f97316' },
-                { at: 0.85, color: 'var(--color-critical)' },
-              ]}
-            />
-            {/* Feature breakdown */}
-            <div className="mt-3 w-full space-y-1.5">
-              {Object.entries(distress.features || {}).map(([key, val]) => (
-                <div key={key} className="flex items-center gap-2">
-                  <span className="text-[9px] text-[var(--color-text-muted)] uppercase w-14 text-right">{key}</span>
-                  <div className="flex-1 h-1 rounded-full bg-[var(--color-glass-border)] overflow-hidden">
-                    <div
-                      className="h-full rounded-full transition-all duration-500"
-                      style={{
-                        width: `${val * 100}%`,
-                        background: val > 0.7 ? 'var(--color-critical)' : val > 0.4 ? 'var(--color-warning)' : 'var(--color-text-muted)',
-                      }}
-                    />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* State Timeline — expands to fill */}
-          <div className="flex-1 flex items-center">
-            <div className="w-full">
-              <StateTimeline currentState={state} />
-            </div>
-          </div>
-
-          {/* Confidence Gauge */}
-          <div className="glass-card p-5 flex flex-col items-center justify-center" style={{ minWidth: 200 }}>
-            <RadialGauge
-              value={confidence}
-              label="Confidence"
-              sublabel={confidence > 0.8 ? 'HIGH' : confidence > 0.5 ? 'MODERATE' : 'LOW'}
-              color="var(--color-verified)"
-              thresholds={[
-                { at: 0, color: 'var(--color-critical)' },
-                { at: 0.5, color: 'var(--color-warning)' },
-                { at: 0.8, color: 'var(--color-verified)' },
-              ]}
-            />
-          </div>
-        </div>
-
-        {/* Row 2: Transcript + Analysis + Simulator */}
-        <div className="flex-1 grid grid-cols-3 gap-4 overflow-hidden">
-          {/* Transcript */}
-          <TranscriptPanel events={events} piiCount={piiCount} />
-
-          {/* Analysis (Editable) */}
-          <AnalysisCard
-            analysis={analysis}
-            sentiment={events.find(e => e.sentiment)?.sentiment}
-            language={events.find(e => e.state === 'ANALYZE')?.language || languageCode}
-            onAgentEdit={sendAgentEdit}
-          />
-
-          {/* Simulator / Mic / Controls */}
-          <SimulatorPanel
-            onSendTranscript={sendTranscript}
-            onSendConfirm={sendConfirm}
-            onSendAudio={sendAudio}
-            onSendTakeover={sendTakeover}
-            state={state}
-            restatement={restatement}
-            ttsAudio={ttsAudio}
-            connected={connected}
-            languageCode={languageCode}
-          />
-        </div>
-      </main>
-
-      {/* ── Footer ─────────────────────────────────────────────────────── */}
-      <footer className="px-6 py-2 border-t border-[var(--color-glass-border)] flex items-center justify-between">
-        <span className="text-[10px] text-[var(--color-text-muted)]">
-          Samvaad 1092 • AI for Bharat 2 • v0.2.0
-        </span>
-        <div className="flex items-center gap-4">
-          <span className="text-[10px] text-[var(--color-text-muted)]">
-            🛡 PII scrubbed locally — no raw data leaves this device
-          </span>
-          <span className="text-[10px] text-[var(--color-text-muted)]">
-            🎙 Sarvam Saaras V3 • 🔊 Bulbul V3
-          </span>
-        </div>
-      </footer>
+        {activeTab === 'overview' && <AnalyticsOverview />}
+        {activeTab === 'inbox' && <GrievanceInbox />}
+        {activeTab === 'live' && <LiveTerminal {...socketProps} debugMode={debugMode} />}
+      </div>
     </div>
+  );
+}
+
+function NavButton({ icon, active, onClick, label, pulse }) {
+  return (
+    <button 
+      onClick={onClick}
+      title={label}
+      className={`relative p-3 rounded-xl transition-all duration-300 group ${
+        active 
+          ? 'bg-indigo-500/20 text-indigo-400 shadow-[inset_0_0_12px_rgba(99,102,241,0.2)]' 
+          : 'text-white/40 hover:text-white/80 hover:bg-white/5'
+      }`}
+    >
+      {icon}
+      {pulse && (
+        <span className="absolute top-2 right-2 flex h-2 w-2">
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+          <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+        </span>
+      )}
+    </button>
   );
 }
