@@ -2,15 +2,15 @@
 
 **AI for Karnataka 1092 Helpline (Theme 12)**
 
-Samvaad 1092 is a production-grade, voice-to-voice AI assistive layer built for high-stress government emergency helplines. It enforces a strict **Verified Understanding** pipeline, ensuring that a caller's emergency, language, and cultural context are fully understood by the AI and verified by the caller before a human operator dispatches resources.
+Samvaad 1092 is a production-grade, voice-to-voice AI assistive layer built for the Karnataka 1092 Civic Grievance Helpline. It focuses heavily on **Verified Administrative Understanding** — ensuring that a citizen's issue, local dialect, and cultural context are precisely understood and routed to the correct administrative department (e.g., BESCOM, BBMP, BWSSB) before a human operator takes action.
 
-It utilizes a Sovereign Hybrid Architecture, blending localized PII scrubbing and Acoustic Distress analysis with powerful Swarm LLM Intelligence and Sarvam AI's speech bridge (Saaras V3 STT & Bulbul V3 TTS).
+It utilizes a Sovereign Hybrid Architecture, blending fast local Machine Learning (Scikit-Learn Naive Bayes department routing, Acoustic Distress analysis, local PII scrubbing) with powerful Swarm LLM Intelligence and Sarvam AI's speech bridge (Saaras V3 STT & Bulbul V3 TTS).
 
 ---
 
 ## 📖 Documentation
 
-Detailed documentation has been separated into the following modules to help you understand the architecture, working, tech stack, and theory behind Samvaad 1092:
+Detailed documentation has been separated into the following modules:
 
 - [**Architecture**](docs/architecture.md): High-level system architecture, FSM, and Swarm Intelligence.
 - [**Working Mechanism**](docs/working.md): Step-by-step pipeline from voice input to database persistence.
@@ -26,6 +26,7 @@ Detailed documentation has been separated into the following modules to help you
 - Python 3.12+
 - Node.js 18+
 - API Keys: Sarvam AI, OpenRouter, Groq, Gemini (optional DeepSeek)
+- (Optional) Twilio Account and ngrok for live phone network integration
 
 ### 2. Backend Setup
 ```bash
@@ -37,11 +38,11 @@ python -m venv .venv
 
 pip install -r requirements.txt
 
-# Copy config and add your keys
-cp ../.env.example ../.env
+# Seed the database with historical grievances for the dashboard
+python scripts/seed_db.py
 
 # Start the FastAPI server (starts on port 8000)
-uvicorn app.main:app --reload
+python -m app.main
 ```
 
 ### 3. Dashboard Setup
@@ -49,15 +50,18 @@ uvicorn app.main:app --reload
 cd dashboard
 npm install
 
-# Start the Vite dev server (starts on port 5173)
+# Start the Vite dev server
 npm run dev
 ```
 
 ### 4. Usage
 Open [http://localhost:5173](http://localhost:5173) in your browser.
-- **Microphone Mode**: Click "Live Mic", speak into your microphone (in English, Hindi, or Kannada), and watch the pipeline process your voice.
-- **Text Mode**: Use the text simulator to paste a transcript directly.
-- **Agent Action**: You can edit the AI's classification in real-time or click "Manual Takeover" to escalate.
+You will see the **Civic Grievance Management System (CGMS)**.
+- **Analytics Overview**: Real-time resolution metrics and department breakdowns.
+- **Civic Inbox**: Searchable database of all historical and active calls.
+- **Live Call (Terminal)**: To test live functionality, either:
+  1. Click the "Bug / Debug" icon in the bottom left of the sidebar to open the web simulator.
+  2. Or, set up Twilio + ngrok (port 8000) to call the system directly from your real mobile phone. The dashboard will automatically switch to Live Terminal mode when it detects an incoming call.
 
 ---
 
