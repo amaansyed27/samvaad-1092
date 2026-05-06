@@ -10,47 +10,131 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.core.database import init_db, get_session, CallRecord
 
 # Extended Synthetic Data for Demo
-DEPARTMENTS = ["BESCOM", "BBMP", "BWSSB", "BMTC", "RTO", "OTHER"]
 STATUSES = ["PENDING", "ESCALATED", "RESOLVED"]
-PRIORITIES = ["LOW", "MEDIUM", "HIGH"]
 LANGUAGES = ["en-IN", "kn-IN", "hi-IN", "ta-IN", "te-IN", "ml-IN"]
 SENTIMENTS = ["frustrated", "calm", "annoyed", "neutral", "angry"]
 
+# Complex tuples: (Raw Transcript, Dept, Issue Type, Priority, Location Hint, Cultural Context, Key Details List)
 COMPLAINTS_BASE = [
     # BESCOM (Electricity)
-    ("Power cut in my area for 3 hours", "BESCOM", "Power Outage", "MEDIUM"),
-    ("Current hogide sir, please help", "BESCOM", "Power Outage", "MEDIUM"),
-    ("Voltage fluctuation damaged my TV", "BESCOM", "Voltage Issue", "LOW"),
-    ("Streetlights on 100ft road are not working", "BESCOM", "Streetlights", "LOW"),
-    ("Meter box is sparking, please send someone", "BESCOM", "Electrical Hazard", "HIGH"),
+    (
+        "Hello sir, I am calling from Koramangala 4th Block, near the Sony World signal. There is no power since yesterday 10 PM. We tried calling the local lineman but no response.", 
+        "BESCOM", "Power Outage", "HIGH", "Koramangala 4th Block, near Sony World signal", 
+        "Caller specifically mentions lack of response from local lineman, indicating frustration with local officials.", 
+        ["Power off since 10 PM yesterday", "No response from local lineman"]
+    ),
+    (
+        "Current hogide sir, HSR Layout Sector 2 nalli. Eradu gante aithu, please help.", 
+        "BESCOM", "Power Outage", "MEDIUM", "HSR Layout Sector 2", 
+        "Spoken in Kannada. 'Current hogide' is a common colloquialism for power cut.", 
+        ["Power off for 2 hours"]
+    ),
+    (
+        "The transformer box on 100ft road Indiranagar is sparking heavily and smoking. Send someone immediately before it catches fire!", 
+        "BESCOM", "Electrical Hazard", "CRITICAL", "100ft road Indiranagar", 
+        "High urgency. Potential fire hazard from municipal infrastructure.", 
+        ["Transformer sparking and smoking", "Potential fire hazard"]
+    ),
+    (
+        "Voltage is fluctuating wildly in Jayanagar 9th block. It already damaged my TV and fridge. Please fix the phase issue.", 
+        "BESCOM", "Voltage Issue", "MEDIUM", "Jayanagar 9th block", 
+        "Caller is claiming property damage due to civic infrastructure failure.", 
+        ["Voltage fluctuating wildly", "Home appliances damaged"]
+    ),
     
     # BBMP (Municipality/Roads/Waste)
-    ("Massive pothole on the main road caused an accident", "BBMP", "Road Damage", "HIGH"),
-    ("Garbage is not collected in Indiranagar for 3 days", "BBMP", "Waste Management", "LOW"),
-    ("Stray dogs are chasing kids near the park", "BBMP", "Animal Control", "MEDIUM"),
-    ("Tree branch fell blocking the road", "BBMP", "Obstruction", "MEDIUM"),
-    ("Someone is burning waste leaves, so much smoke", "BBMP", "Pollution", "MEDIUM"),
+    (
+        "Sir, there is a massive pothole right in the middle of the Outer Ring Road near Bellandur ecospace. Two bikers fell down this morning.", 
+        "BBMP", "Road Damage", "HIGH", "Outer Ring Road near Bellandur Ecospace", 
+        "Safety hazard reported on a major tech corridor. Public safety at risk.", 
+        ["Massive pothole in middle of road", "Two accidents already occurred"]
+    ),
+    (
+        "Garbage has not been collected in Malleshwaram 3rd Main for four days. Dogs are tearing the covers and it stinks.", 
+        "BBMP", "Waste Management", "LOW", "Malleshwaram 3rd Main", 
+        "Standard municipal complaint regarding solid waste management delay.", 
+        ["Garbage not collected for 4 days", "Stray dog nuisance causing mess"]
+    ),
+    (
+        "Someone is illegally burning waste leaves and plastic near the BBMP park in BTM Layout. So much toxic smoke.", 
+        "BBMP", "Pollution", "MEDIUM", "BBMP park in BTM Layout", 
+        "Air pollution violation.", 
+        ["Illegal burning of plastic/waste", "Toxic smoke in residential area"]
+    ),
+    (
+        "A huge tree branch fell during the rain and is completely blocking the 1st cross road in Basavanagudi.", 
+        "BBMP", "Obstruction", "HIGH", "1st cross road in Basavanagudi", 
+        "Monsoon related civic obstruction requiring immediate clearance.", 
+        ["Fallen tree branch blocking road", "Caused by recent rain"]
+    ),
     
     # BWSSB (Water/Sewage)
-    ("No drinking water supply since yesterday morning", "BWSSB", "Water Supply", "HIGH"),
-    ("Drainage overflowing on the main street, smelling bad", "BWSSB", "Sewage Overflow", "MEDIUM"),
-    ("Sewage water mixing with drinking water line", "BWSSB", "Contamination", "HIGH"),
-    ("Huge water leak from the main pipe", "BWSSB", "Pipe Burst", "HIGH"),
-    ("Manhole cover is missing, someone might fall", "BWSSB", "Public Hazard", "HIGH"),
+    (
+        "No Cauvery drinking water supply in Whitefield Phase 1 since yesterday morning. We are relying on expensive tankers.", 
+        "BWSSB", "Water Supply", "HIGH", "Whitefield Phase 1", 
+        "Mentions 'Cauvery water', a highly specific Bangalore term for municipal piped drinking water.", 
+        ["No municipal water since yesterday morning", "Relying on private tankers"]
+    ),
+    (
+        "Underground drainage is overflowing right in front of the Majestic bus stand entrance. It smells terrible and people can't walk.", 
+        "BWSSB", "Sewage Overflow", "HIGH", "Majestic bus stand entrance", 
+        "High foot-traffic area affected by sewage, major public nuisance.", 
+        ["Drainage overflowing onto street", "Terrible smell and blockage"]
+    ),
+    (
+        "We suspect sewage water is mixing with our drinking water line in Rajajinagar 4th Block. The tap water is yellowish and smells foul.", 
+        "BWSSB", "Contamination", "CRITICAL", "Rajajinagar 4th Block", 
+        "Public health crisis. Requires immediate water testing.", 
+        ["Sewage mixing with drinking water", "Water is yellow and smells foul"]
+    ),
+    (
+        "There is a huge water leak from the main BWSSB pipe near the Silk Board junction. Thousands of liters wasting.", 
+        "BWSSB", "Pipe Burst", "MEDIUM", "Silk Board junction", 
+        "Resource wastage at a major traffic bottleneck.", 
+        ["Main pipe burst", "Large scale water wastage"]
+    ),
     
     # BMTC (Transport)
-    ("Bus number 500D didn't stop at the designated stop", "BMTC", "Service Issue", "LOW"),
-    ("Conductor was very rude and didn't give change", "BMTC", "Staff Behavior", "LOW"),
-    ("Bus is smoking heavily from the back", "BMTC", "Vehicle Condition", "MEDIUM"),
+    (
+        "Bus number 500D did not stop at the Kadubeesanahalli designated stop even though it was empty. The driver just drove past.", 
+        "BMTC", "Service Issue", "LOW", "Kadubeesanahalli bus stop", 
+        "Complaint against specific route operator behavior.", 
+        ["Bus 500D ignored stop", "Bus was empty"]
+    ),
+    (
+        "The conductor on the Volvo AC bus to Airport was very rude and refused to give back my 50 rupees change.", 
+        "BMTC", "Staff Behavior", "MEDIUM", "Volvo Airport Route", 
+        "Financial/behavioral complaint against government staff.", 
+        ["Conductor refused to return change", "Rude behavior"]
+    ),
     
     # RTO (Licensing)
-    ("I haven't received my RC book even after 2 months", "RTO", "Document Delay", "LOW"),
-    ("Agent is asking for bribe at the test center", "RTO", "Corruption", "HIGH"),
+    (
+        "I submitted my documents for a driving license renewal at the Yeshwanthpur RTO 3 months ago and haven't received my smart card.", 
+        "RTO", "Document Delay", "LOW", "Yeshwanthpur RTO", 
+        "Standard administrative delay grievance.", 
+        ["DL renewal delayed by 3 months", "Smart card not received"]
+    ),
+    (
+        "An agent outside the Electronic City RTO is demanding a 2000 rupee bribe to clear my vehicle registration inspection.", 
+        "RTO", "Corruption", "HIGH", "Electronic City RTO", 
+        "Vigilance issue. Caller reporting direct bribery by middlemen.", 
+        ["Agent demanding 2000 INR bribe", "Issue regarding vehicle registration"]
+    ),
     
     # OTHER (Outliers/Noise)
-    ("Where is the nearest post office?", "OTHER", "Information", "LOW"),
-    ("My internet is not working", "OTHER", "Telecom", "LOW"),
-    ("What time does the metro start?", "OTHER", "Information", "LOW")
+    (
+        "Hello, can you tell me where the nearest post office is located near MG Road?", 
+        "OTHER", "Information", "LOW", "MG Road", 
+        "Non-grievance. Caller seeking general directory information.", 
+        ["Seeking post office location"]
+    ),
+    (
+        "My Jio internet is completely down since morning, I need to work from home.", 
+        "OTHER", "Telecom", "LOW", "Not specified", 
+        "Private sector complaint routed to government helpline.", 
+        ["Internet down since morning"]
+    )
 ]
 
 def add_noise_to_transcript(text):
@@ -76,21 +160,19 @@ def add_noise_to_transcript(text):
 async def seed():
     await init_db()
     async with get_session() as db:
-        print("Seeding robust synthetic dataset...")
+        print("Seeding hyper-realistic civic data...")
         
         # Clear existing for fresh seed
         from sqlalchemy import text
         await db.execute(text("DELETE FROM call_records;"))
         await db.execute(text("DELETE FROM ml_training_data;"))
         
-        for i in range(250): # Substantial dataset
+        for i in range(200): # Substantial dataset
             base = random.choice(COMPLAINTS_BASE)
             raw_text = add_noise_to_transcript(base[0])
             
             call_id = uuid.uuid4().hex[:12]
             
-            # Skew timestamps to look like an active week of operations
-            # Heavy concentration in the last 48 hours
             if random.random() > 0.7:
                 days_ago = random.randint(2, 14)
             else:
@@ -102,41 +184,43 @@ async def seed():
             dept = base[1]
             emergency_type = base[2]
             priority = base[3]
+            location_hint = base[4]
+            cultural_context = base[5]
+            key_details = base[6]
             
-            # Logic correlation
             distress_level = "CRITICAL" if priority == "CRITICAL" else random.choice(["LOW", "MODERATE", "HIGH"])
             distress_score = random.uniform(0.8, 1.0) if distress_level == "CRITICAL" else random.uniform(0.0, 0.7)
-            sentiment = "panicked" if priority == "CRITICAL" else random.choice(SENTIMENTS)
+            sentiment = "angry" if priority == "CRITICAL" else random.choice(SENTIMENTS)
             
-            # Simulation of LLM confidence based on noise
-            confidence = random.uniform(0.65, 0.99)
+            confidence = random.uniform(0.75, 0.99)
             if "uh" in raw_text or "um" in raw_text:
-                confidence -= random.uniform(0.1, 0.2)
+                confidence -= random.uniform(0.05, 0.15)
                 
-            # Randomize status with bias
             if priority == "CRITICAL":
                 status = random.choice(["ESCALATED", "RESOLVED"])
             else:
                 status = random.choices(STATUSES, weights=[0.4, 0.1, 0.5])[0]
                 
-            caller_confirmed = random.random() > 0.15 # 85% confirmation rate
+            caller_confirmed = random.random() > 0.10 # 90% confirmation rate
             state = "VERIFIED" if caller_confirmed else "HUMAN_TAKEOVER"
-            
-            agent_edited = random.random() > 0.85 # 15% agent edit rate
+            agent_edited = random.random() > 0.85 
             
             record = CallRecord(
                 call_id=call_id,
                 state=state,
-                language_detected=random.choices(LANGUAGES, weights=[0.4, 0.3, 0.2, 0.05, 0.025, 0.025])[0],
+                language_detected=random.choices(LANGUAGES, weights=[0.5, 0.2, 0.15, 0.05, 0.05, 0.05])[0],
                 raw_transcript=raw_text,
-                scrubbed_transcript=raw_text, # Assuming clean for basic seed
-                restated_summary=f"I understand you are reporting {emergency_type.lower()}. Is that correct?",
+                scrubbed_transcript=raw_text, 
+                restated_summary=f"I understand you are reporting an issue with {emergency_type.lower()}. Is that correct?",
                 emergency_type=emergency_type,
                 department_assigned=dept,
                 resolution_status=status,
                 priority=priority,
                 severity=priority.lower(),
                 sentiment=sentiment,
+                location_hint=location_hint,
+                cultural_context=cultural_context,
+                key_details=key_details,
                 confidence=round(confidence, 2),
                 distress_score=round(distress_score, 2),
                 distress_level=distress_level,
@@ -149,7 +233,7 @@ async def seed():
             db.add(record)
             
         await db.commit()
-        print("Successfully seeded database with 250 diverse records featuring synthetic noise and correlations.")
+        print("Successfully seeded database with 200 hyper-realistic records featuring rich metadata.")
 
 if __name__ == "__main__":
     asyncio.run(seed())
