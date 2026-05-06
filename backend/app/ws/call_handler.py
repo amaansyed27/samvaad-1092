@@ -144,6 +144,10 @@ class ConnectionManager:
         self, session: CallSession, msg: dict, call_id: str
     ) -> None:
         """Process incoming audio: Acoustic Guardian → Sarvam STT → Pipeline."""
+        # Check if the call is already resolved or escalated
+        if session.state in (VerificationState.VERIFIED.value, VerificationState.HUMAN_TAKEOVER.value):
+            return
+            
         audio_b64 = msg.get("data", "")
         if not audio_b64:
             return
@@ -207,6 +211,10 @@ class ConnectionManager:
         self, session: CallSession, msg: dict, call_id: str
     ) -> None:
         """Process text transcript (simulator mode) and run full pipeline."""
+        # Check if the call is already resolved or escalated
+        if session.state in (VerificationState.VERIFIED.value, VerificationState.HUMAN_TAKEOVER.value):
+            return
+            
         text = msg.get("text", "").strip()
         if not text:
             return

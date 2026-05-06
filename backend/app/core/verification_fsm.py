@@ -50,7 +50,7 @@ _TRANSITIONS: dict[VerificationState, set[VerificationState]] = {
     VerificationState.LISTEN: {VerificationState.SCRUB, VerificationState.HUMAN_TAKEOVER},
     VerificationState.SCRUB: {VerificationState.ANALYZE, VerificationState.HUMAN_TAKEOVER},
     VerificationState.ANALYZE: {VerificationState.RESTATE, VerificationState.HUMAN_TAKEOVER},
-    VerificationState.RESTATE: {VerificationState.WAIT_FOR_CONFIRM, VerificationState.HUMAN_TAKEOVER},
+    VerificationState.RESTATE: {VerificationState.WAIT_FOR_CONFIRM, VerificationState.LISTEN, VerificationState.HUMAN_TAKEOVER},
     VerificationState.WAIT_FOR_CONFIRM: {VerificationState.VERIFIED, VerificationState.LISTEN, VerificationState.HUMAN_TAKEOVER},
     VerificationState.VERIFIED: set(),  # terminal
     VerificationState.HUMAN_TAKEOVER: set(),  # terminal
@@ -63,44 +63,43 @@ class InvalidTransition(Exception):
 
 # ── Prompt Templates ─────────────────────────────────────────────────────────
 
-_SENTIMENT_PROMPT = """\
-You are an emergency call sentiment analyser for the Karnataka 1092 Helpline.
-Analyse the following transcript and return ONLY a JSON object:
-{
-  "sentiment": "distressed|calm|panicked|angry|confused",
-  "confidence": 0.0-1.0,
-  "language_detected": "kannada|hindi|english|mixed"
-}
-Be precise. This is a life-safety system."""
-
 _ANALYSIS_PROMPT = """\
-You are an expert emergency dispatcher for the Karnataka 1092 Helpline.
+You are an expert civic grievance dispatcher for the Karnataka 1092 Helpline.
 You handle calls in Kannada, Hindi, and English. Analyse this scrubbed
-transcript and the provided Acoustic Distress Score, then return ONLY a JSON object:
+transcript and the provided Acoustic Distress Score.
+
+Determine the grievance details. If the caller did not provide enough detail (e.g. they just said "power cut" but no location, or "no water" but no area), you must set "needs_clarification" to true.
+
+Return ONLY a JSON object:
 {
-  "emergency_type": "medical|fire|accident|crime|natural_disaster|domestic_violence|other",
-  "department": "BESCOM|BBMP|BWSSB|POLICE|FIRE|OTHER",
-  "location_hint": "any location clues from the caller",
-  "severity": "critical|high|medium|low",
-  "priority": "CRITICAL|HIGH|MEDIUM|LOW",
-  "sentiment": "distressed|calm|panicked|angry|confused",
+  "emergency_type": "power_outage|water_supply|waste_management|road_damage|streetlights|noise_disturbance|animal_control|other",
+  "department": "BESCOM|BBMP|BWSSB|POLICE|FIRE|BMTC|RTO|OTHER",
+  "location_hint": "exact location or landmark",
+  "severity": "high|medium|low",
+  "priority": "HIGH|MEDIUM|LOW",
+  "sentiment": "frustrated|annoyed|calm|confused|angry",
+  "language_detected": "kannada|hindi|english|mixed",
   "key_details": ["detail1", "detail2"],
   "cultural_context": "any dialect or cultural nuances relevant to responders",
   "semantic_distress_score": 0.0-1.0,
-  "requires_immediate_takeover": true/false,
+  "needs_clarification": true,
+  "requires_immediate_takeover": false,
   "confidence": 0.0-1.0
 }
-Use the Acoustic Distress Score as a hint: if it is high (e.g., > 0.8) and the text is frantic, require immediate takeover. If the text is calm but the mic is loud, semantic_distress should be low.
+Use the Acoustic Distress Score as a hint: if the text is calm but the mic is loud, semantic_distress should be low.
 Be thorough but concise. Lives depend on accuracy."""
 
 _RESTATE_PROMPT = """\
-You are a compassionate emergency call assistant for the Karnataka 1092 Helpline.
-Based on the analysis below, generate a SHORT restatement in the SAME LANGUAGE
-the caller used. This will be spoken back to the caller for verification.
+You are a civic grievance assistant for the Karnataka 1092 Helpline.
+Based on the analysis below, generate a SHORT response in the SAME LANGUAGE the caller used.
 
-Format: "I understand that [situation]. Is that correct?"
-Translate to the caller's language if not English.
-Keep it under 50 words. Be empathetic but clear."""
+If "needs_clarification" is true:
+Politely ask the caller for the missing details (like their location or landmark) so you can log the ticket with the specific department.
+
+If "needs_clarification" is false:
+Restate the issue and ask for confirmation to log the ticket. Example: "I am logging a ticket with BESCOM for the power cut in Indiranagar. Should I proceed?"
+
+Translate to the caller's language if not English. Keep it under 40 words. Be empathetic but professional."""
 
 _CONFIRMATION_PROMPT = """\
 You are an emergency intent analyser. The AI assistant just restated the emergency
@@ -114,11 +113,11 @@ Return ONLY a JSON object:
 }"""
 
 _DISPATCH_PROMPT = """\
-You are an emergency dispatcher. The caller has just confirmed their emergency details.
+You are a civic grievance dispatcher. The caller has just confirmed their issue.
 Generate a final reassurance message in their language (English/Hindi/Kannada).
-Tell them that help (ambulance/fire/police) is being dispatched and to stay on the line.
+Tell them that their ticket has been logged with the appropriate department and action will be taken.
 Keep it under 20 words.
-Example: "An ambulance is being dispatched now. Please stay on the line."
+Example: "Your ticket has been logged with BESCOM. They will resolve the issue soon. Thank you."
 """
 
 
@@ -270,24 +269,7 @@ class VerificationEngine:
         transcript = session.scrubbed_transcript
         acoustic_score = session.distress_score or 0.0
 
-        # ── Step 1: Fast sentiment via Groq/Flash ────────────────────────
-        try:
-            sentiment_text, sent_log = await self._factory.cascade_generate(
-                system_prompt=_SENTIMENT_PROMPT,
-                user_message=transcript,
-                purpose="sentiment",
-                providers=["groq", "openrouter", "gemini", "or-hy3", "or-oss-120b", "or-nano", "deepseek"],
-                max_tokens=256,
-            )
-            sentiment_data = _safe_json_parse(sentiment_text)
-            session.sentiment = sentiment_data.get("sentiment", "unknown")
-            session.language_detected = sentiment_data.get("language_detected", "unknown")
-            session.cascade_log.extend(sent_log)
-        except Exception as exc:
-            logger.error("Sentiment cascade failed: %s", exc)
-            session.sentiment = "unknown"
-
-        # ── Step 2: Deep analysis via DeepSeek/Gemini ────────────────────
+        # ── Deep analysis via DeepSeek/Groq/Gemini ────────────────────
         try:
             analysis_prompt_input = (
                 f"Acoustic Distress Score (0=calm, 1=screaming/noise): {acoustic_score:.2f}\n"
@@ -303,6 +285,9 @@ class VerificationEngine:
             analysis_data = _safe_json_parse(analysis_text)
             session.analysis_result = AnalysisResult(**analysis_data)
             session.confidence = analysis_data.get("confidence", 0.0)
+            session.sentiment = analysis_data.get("sentiment", "unknown")
+            session.language_detected = analysis_data.get("language_detected", "unknown")
+            
             if analysis_data.get("department"):
                 session.department_assigned = analysis_data["department"]
             if analysis_data.get("priority"):
@@ -384,10 +369,17 @@ class VerificationEngine:
             logger.error("Restatement cascade failed: %s", exc)
             return self.force_takeover(session, f"Restatement failed: {exc}")
 
-        self._transition(session, VerificationState.WAIT_FOR_CONFIRM)
+        # If we need clarification, we loop back to LISTEN instead of waiting for a YES/NO confirmation
+        needs_clarification = False
+        if session.analysis_result and session.analysis_result.needs_clarification:
+            needs_clarification = True
+            
+        next_state = VerificationState.LISTEN if needs_clarification else VerificationState.WAIT_FOR_CONFIRM
+        self._transition(session, next_state)
+        
         return {
             "event": "restatement",
-            "state": "WAIT_FOR_CONFIRM",
+            "state": next_state.value,
             "restatement": session.restated_summary,
         }
 

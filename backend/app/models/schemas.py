@@ -96,6 +96,7 @@ class AnalysisResult(BaseModel):
     key_details: list[str] = Field(default_factory=list)
     cultural_context: str | None = None
     semantic_distress_score: float = 0.0
+    needs_clarification: bool = False
     requires_immediate_takeover: bool = False
     confidence: float = 0.0
 

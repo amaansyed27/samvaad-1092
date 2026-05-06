@@ -29,18 +29,14 @@ TRAINING_DATA = [
     ("pani nahi aa raha", "BWSSB"), ("neeru bandilla", "BWSSB"), ("drinking water smells bad", "BWSSB"),
     ("underground drain leaking", "BWSSB"), ("water supply line broken", "BWSSB"), ("dirty water coming", "BWSSB"),
     
-    # POLICE (Law & Order)
-    ("loud music late night", "POLICE"), ("suspicious activity", "POLICE"), ("fight on street", "POLICE"),
-    ("theft", "POLICE"), ("someone is following me", "POLICE"), ("harassment", "POLICE"),
-    ("domestic violence", "POLICE"), ("illegal parking", "POLICE"),
-    ("someone stole my bike", "POLICE"), ("goondas making trouble", "POLICE"), ("assault happening", "POLICE"),
-    ("neighbor is beating his wife", "POLICE"), ("drunk people shouting", "POLICE"), ("pickpocket", "POLICE"),
+    # BMTC (Transport)
+    ("bus driver was rude", "BMTC"), ("bus did not stop", "BMTC"), ("conductor asking for bribe", "BMTC"),
+    ("bus smoking heavily", "BMTC"), ("overcrowded bus", "BMTC"), ("bus broke down", "BMTC"),
+    ("route 500d is delayed", "BMTC"), ("no change given", "BMTC"), ("volvo AC not working", "BMTC"),
     
-    # FIRE (Fire/Emergency)
-    ("fire caught", "FIRE"), ("building on fire", "FIRE"), ("smoke coming out", "FIRE"),
-    ("cylinder blast", "FIRE"), ("shop burning", "FIRE"), ("gas leak", "FIRE"),
-    ("aag lag gayi", "FIRE"), ("benki biddide", "FIRE"), ("house is burning", "FIRE"),
-    ("explosion in factory", "FIRE"), ("flames everywhere", "FIRE"), ("car caught fire", "FIRE"),
+    # RTO (Licensing)
+    ("driving license delayed", "RTO"), ("agent asking for money", "RTO"), ("rc book not received", "RTO"),
+    ("vehicle registration issue", "RTO"), ("test center corruption", "RTO"), ("number plate issue", "RTO"),
     
     # OTHER (Outliers/Noise/Non-Actionable)
     ("what is the time?", "OTHER"), ("hello can you hear me", "OTHER"), ("where is the nearest hospital", "OTHER"),

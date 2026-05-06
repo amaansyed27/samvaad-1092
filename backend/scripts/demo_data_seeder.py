@@ -10,48 +10,42 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.core.database import init_db, get_session, CallRecord
 
 # Extended Synthetic Data for Demo
-DEPARTMENTS = ["BESCOM", "BBMP", "BWSSB", "POLICE", "FIRE", "OTHER"]
+DEPARTMENTS = ["BESCOM", "BBMP", "BWSSB", "BMTC", "RTO", "OTHER"]
 STATUSES = ["PENDING", "ESCALATED", "RESOLVED"]
-PRIORITIES = ["LOW", "MEDIUM", "HIGH", "CRITICAL"]
+PRIORITIES = ["LOW", "MEDIUM", "HIGH"]
 LANGUAGES = ["en-IN", "kn-IN", "hi-IN", "ta-IN", "te-IN", "ml-IN"]
-SENTIMENTS = ["distressed", "calm", "angry", "confused", "panicked"]
+SENTIMENTS = ["frustrated", "calm", "annoyed", "neutral", "angry"]
 
 COMPLAINTS_BASE = [
     # BESCOM (Electricity)
     ("Power cut in my area for 3 hours", "BESCOM", "Power Outage", "MEDIUM"),
     ("Current hogide sir, please help", "BESCOM", "Power Outage", "MEDIUM"),
-    ("Transformer sparked and caught fire near my house", "BESCOM", "Fire/Electrical", "CRITICAL"),
     ("Voltage fluctuation damaged my TV", "BESCOM", "Voltage Issue", "LOW"),
-    ("Streetlights on 100ft road are not working", "BESCOM", "Streetlight", "LOW"),
-    ("Wire snapped and fell on the road, very dangerous!", "BESCOM", "Hazard", "HIGH"),
+    ("Streetlights on 100ft road are not working", "BESCOM", "Streetlights", "LOW"),
+    ("Meter box is sparking, please send someone", "BESCOM", "Electrical Hazard", "HIGH"),
     
     # BBMP (Municipality/Roads/Waste)
     ("Massive pothole on the main road caused an accident", "BBMP", "Road Damage", "HIGH"),
     ("Garbage is not collected in Indiranagar for 3 days", "BBMP", "Waste Management", "LOW"),
     ("Stray dogs are chasing kids near the park", "BBMP", "Animal Control", "MEDIUM"),
     ("Tree branch fell blocking the road", "BBMP", "Obstruction", "MEDIUM"),
-    ("Illegal construction happening next door", "BBMP", "Code Violation", "LOW"),
     ("Someone is burning waste leaves, so much smoke", "BBMP", "Pollution", "MEDIUM"),
     
     # BWSSB (Water/Sewage)
     ("No drinking water supply since yesterday morning", "BWSSB", "Water Supply", "HIGH"),
-    ("Drainage overflowing on the main street, smelling bad", "BWSSB", "Sewage", "MEDIUM"),
-    ("Sewage water mixing with drinking water line", "BWSSB", "Contamination", "CRITICAL"),
+    ("Drainage overflowing on the main street, smelling bad", "BWSSB", "Sewage Overflow", "MEDIUM"),
+    ("Sewage water mixing with drinking water line", "BWSSB", "Contamination", "HIGH"),
     ("Huge water leak from the main pipe", "BWSSB", "Pipe Burst", "HIGH"),
-    ("Manhole cover is missing, someone might fall", "BWSSB", "Hazard", "CRITICAL"),
+    ("Manhole cover is missing, someone might fall", "BWSSB", "Public Hazard", "HIGH"),
     
-    # POLICE (Law & Order)
-    ("Loud music playing after 11 PM", "POLICE", "Noise Disturbance", "LOW"),
-    ("Suspicious people gathering near the ATM", "POLICE", "Suspicious Activity", "MEDIUM"),
-    ("Two guys are fighting on the street", "POLICE", "Public Disturbance", "HIGH"),
-    ("My bike was stolen from the parking lot", "POLICE", "Theft", "MEDIUM"),
-    ("Someone is following me, I feel unsafe", "POLICE", "Harassment", "CRITICAL"),
-    ("Domestic violence happening in the next apartment", "POLICE", "Violence", "CRITICAL"),
+    # BMTC (Transport)
+    ("Bus number 500D didn't stop at the designated stop", "BMTC", "Service Issue", "LOW"),
+    ("Conductor was very rude and didn't give change", "BMTC", "Staff Behavior", "LOW"),
+    ("Bus is smoking heavily from the back", "BMTC", "Vehicle Condition", "MEDIUM"),
     
-    # FIRE (Fire/Emergency)
-    ("A shop caught fire in the market", "FIRE", "Fire Incident", "CRITICAL"),
-    ("Thick black smoke coming from the apartment window", "FIRE", "Fire Incident", "CRITICAL"),
-    ("Gas cylinder blast in the neighborhood", "FIRE", "Explosion", "CRITICAL"),
+    # RTO (Licensing)
+    ("I haven't received my RC book even after 2 months", "RTO", "Document Delay", "LOW"),
+    ("Agent is asking for bribe at the test center", "RTO", "Corruption", "HIGH"),
     
     # OTHER (Outliers/Noise)
     ("Where is the nearest post office?", "OTHER", "Information", "LOW"),
