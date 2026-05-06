@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react';
-import { CheckCircle, Clock, Search, MapPin, ChevronDown, ChevronUp, AlertCircle, Info, ShieldAlert } from 'lucide-react';
+import { CheckCircle, Clock, Search, MapPin, ChevronDown, ChevronUp, AlertCircle, Info, ShieldAlert, ChevronsUpDown } from 'lucide-react';
 
 export default function GrievanceInbox() {
   const [grievances, setGrievances] = useState([]);
   const [search, setSearch] = useState('');
   const [expandedId, setExpandedId] = useState(null);
+  const [sortField, setSortField] = useState('date');
+  const [sortDirection, setSortDirection] = useState('desc');
 
   const fetchGrievances = () => {
     fetch('http://localhost:8000/api/grievances')
@@ -27,12 +29,43 @@ export default function GrievanceInbox() {
     setExpandedId(expandedId === id ? null : id);
   };
 
+  const handleSort = (field) => {
+    if (sortField === field) {
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortDirection(field === 'date' || field === 'priority' || field === 'status' ? 'desc' : 'asc');
+    }
+  };
+
   const filtered = grievances.filter(g => 
     g.department_assigned?.toLowerCase().includes(search.toLowerCase()) || 
     g.emergency_type?.toLowerCase().includes(search.toLowerCase()) ||
     g.location_hint?.toLowerCase().includes(search.toLowerCase()) ||
     g.raw_transcript?.toLowerCase().includes(search.toLowerCase())
   );
+
+  const priorityWeight = { 'CRITICAL': 4, 'HIGH': 3, 'MEDIUM': 2, 'LOW': 1 };
+  const statusWeight = { 'PENDING': 3, 'ESCALATED': 2, 'RESOLVED': 1 };
+
+  const sorted = [...filtered].sort((a, b) => {
+    let comparison = 0;
+    if (sortField === 'date') {
+      comparison = new Date(a.completed_at || 0).getTime() - new Date(b.completed_at || 0).getTime();
+    } else if (sortField === 'priority') {
+      comparison = (priorityWeight[a.priority] || 0) - (priorityWeight[b.priority] || 0);
+    } else if (sortField === 'status') {
+      comparison = (statusWeight[a.resolution_status] || 0) - (statusWeight[b.resolution_status] || 0);
+    } else if (sortField === 'department') {
+      comparison = (a.department_assigned || '').localeCompare(b.department_assigned || '');
+    }
+    return sortDirection === 'asc' ? comparison : -comparison;
+  });
+
+  const SortIcon = ({ field }) => {
+    if (sortField !== field) return <ChevronsUpDown className="w-3 h-3 opacity-30" />;
+    return sortDirection === 'asc' ? <ChevronUp className="w-3 h-3 text-indigo-400" /> : <ChevronDown className="w-3 h-3 text-indigo-400" />;
+  };
 
   return (
     <div className="flex-1 p-8 overflow-y-auto bg-[#030304] custom-scrollbar text-white">
@@ -52,19 +85,27 @@ export default function GrievanceInbox() {
 
       <div className="bg-white/[0.01] border border-white/5 rounded-xl overflow-hidden shadow-2xl">
         {/* Table Header */}
-        <div className="grid grid-cols-12 gap-4 px-6 py-4 bg-black/40 border-b border-white/5 text-[9px] font-black tracking-widest text-white/30 uppercase">
-          <div className="col-span-1">Ticket ID</div>
-          <div className="col-span-2">Department</div>
+        <div className="grid grid-cols-12 gap-4 px-6 py-4 bg-black/40 border-b border-white/5 text-[9px] font-black tracking-widest text-white/30 uppercase select-none">
+          <div className="col-span-1 flex items-center gap-1 cursor-pointer hover:text-white/50 transition-colors" onClick={() => handleSort('date')}>
+            Ticket ID <SortIcon field="date" />
+          </div>
+          <div className="col-span-2 flex items-center gap-1 cursor-pointer hover:text-white/50 transition-colors" onClick={() => handleSort('department')}>
+            Department <SortIcon field="department" />
+          </div>
           <div className="col-span-3">Location</div>
           <div className="col-span-2">Issue Type</div>
-          <div className="col-span-1">Priority</div>
-          <div className="col-span-2">Status</div>
+          <div className="col-span-1 flex items-center gap-1 cursor-pointer hover:text-white/50 transition-colors" onClick={() => handleSort('priority')}>
+            Priority <SortIcon field="priority" />
+          </div>
+          <div className="col-span-2 flex items-center gap-1 cursor-pointer hover:text-white/50 transition-colors" onClick={() => handleSort('status')}>
+            Status <SortIcon field="status" />
+          </div>
           <div className="col-span-1 text-right">Actions</div>
         </div>
 
         {/* Table Body */}
         <div className="divide-y divide-white/5">
-          {filtered.map(g => {
+          {sorted.map(g => {
             const isExpanded = expandedId === g.call_id;
             
             return (
