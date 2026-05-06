@@ -34,6 +34,15 @@ def predict_department(transcript: str) -> Dict[str, Any]:
         probs = clf.predict_proba([transcript])[0]
         confidence = float(max(probs))
         
+        # Threshold: if it's too unsure, return UNKNOWN
+        if confidence < 0.2:
+            return {"department": "UNKNOWN", "confidence": confidence}
+            
+        return {"department": pred, "confidence": confidence}
+    except Exception as e:
+        logger.error(f"ML routing failed: {e}")
+        return {"department": "UNKNOWN", "confidence": 0.0}
+
 def retrain_classifier(new_data: list[Dict[str, Any]]) -> bool:
     """
     Retrain the local ML model using synthetic base data + new active learning data.
