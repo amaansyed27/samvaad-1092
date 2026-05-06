@@ -116,8 +116,9 @@ _DISPATCH_PROMPT = """\
 You are a civic grievance dispatcher. The caller has just confirmed their issue.
 Generate a final reassurance message in their language (English/Hindi/Kannada).
 Tell them that their ticket has been logged with the appropriate department and action will be taken.
-Keep it under 20 words.
-Example: "Your ticket has been logged with BESCOM. They will resolve the issue soon. Thank you."
+IMPORTANT: You MUST include their Ticket ID in the message.
+Keep it under 30 words.
+Example: "Your ticket has been logged with BESCOM under ID A1B2C3. They will resolve the issue soon. Thank you."
 """
 
 
@@ -400,7 +401,7 @@ class VerificationEngine:
             try:
                 res, _ = await self._factory.cascade_generate(
                     system_prompt=_DISPATCH_PROMPT,
-                    user_message=f"Context: {session.restated_summary}\nLanguage: {session.language_detected}",
+                    user_message=f"Context: {session.restated_summary}\nLanguage: {session.language_detected}\nTicket ID: {session.call_id[:6]}",
                     purpose="dispatch_feedback",
                     providers=["groq", "gemini"],
                     max_tokens=128
