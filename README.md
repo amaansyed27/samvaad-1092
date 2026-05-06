@@ -44,7 +44,7 @@ pip install -r requirements.txt
 python scripts/demo_data_seeder.py
 
 # Start the FastAPI server (starts on port 8000)
-python -m app.main
+uvicorn app.main:app --reload
 ```
 
 ### 3. Dashboard Setup

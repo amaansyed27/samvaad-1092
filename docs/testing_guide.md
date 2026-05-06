@@ -7,7 +7,7 @@ This guide outlines the testing procedures for the **Samvaad 1092** platform, en
 ## 🛠️ Testing Environment Setup
 
 Before testing, ensure your backend and dashboard are running:
-- **Backend**: `python -m app.main` (Runs on Port 8000)
+- **Backend**: `uvicorn app.main:app --reload` (Runs on Port 8000)
 - **Dashboard**: `npm run dev` (Runs on Port 5173)
 
 ### Option A: The "Live Phone" Demo (Twilio + Ngrok) - Recommended
