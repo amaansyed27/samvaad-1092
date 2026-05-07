@@ -25,6 +25,7 @@ graph TB
             STT[Sarvam Saaras V3 API]
             LLM[LLM Swarm Cascade<br>Groq / Gemini / Nemotron / DeepSeek]
             TTS[Sarvam Bulbul V3 API]
+            GEO[Dynamic Location Resolver<br>Geocoder + Map Pin]
         end
         
         DB[(SQLite Persistence<br>Learning Signals)]
@@ -39,6 +40,8 @@ graph TB
     FSM --> STT
     STT -- Transcript --> ML
     ML -- Instant Dept Routing --> FSM
+    FSM --> GEO
+    GEO -- Candidates / Pin Verification --> FSM
     
     FSM --> PII
     PII -- Scrubbed Text --> LLM
@@ -82,3 +85,5 @@ The live path now includes a deterministic call-center intake layer on top of th
 Persistence has been expanded beyond a single transcript. Each call record stores raw transcript, scrubbed transcript, caller/assistant turn log, structured conversation memory, agent corrections, and active-learning feedback type.
 
 Twilio turn-taking is explicit. VAD decides utterance boundaries, Sarvam streaming/REST STT transcribes, and barge-in only cancels assistant playback when Twilio marks a real speech frame. During assistant speech, echo protection raises the VAD threshold so line noise does not cancel TTS.
+
+Location resolution is now dynamic, not a hard-coded demo list. The FSM sends heard area/landmark text to a provider chain: live geocoder search first, browser/operator map pin when available, and local fallback only when the provider is disabled or unavailable. Ambiguous matches create a `location_confirm` slot so the caller or operator confirms the exact place before dispatch.

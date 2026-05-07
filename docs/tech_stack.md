@@ -20,6 +20,7 @@ The platform is divided into a high-concurrency Python backend, a powerful Machi
   - Google Gemini API (Multimodal/Reasoning fallback)
 - **Audio Processing**: `librosa`, `soundfile` (for Acoustic Guardian distress detection).
 - **PII Redaction**: Built-in Regex rules + Extensible hooks for IndicNER (`transformers`, `torch`).
+- **Location Search**: Dynamic geocoder provider chain using OpenStreetMap Nominatim by default, with a local fallback for offline demos.
 
 ## Frontend (Operator Dashboard)
 - **Framework**: React 18
@@ -42,3 +43,4 @@ The platform is divided into a high-concurrency Python backend, a powerful Machi
 - **TTS Path**: Sarvam Bulbul v3 uses a light female voice configuration and streams audio chunks back to browser/Twilio.
 - **Turn-Taking**: Twilio VAD uses RMS thresholds and assistant-echo protection. Barge-in is explicit and does not cancel playback on every inbound frame.
 - **Dashboard Diagnostics**: WebSocket events expose audio activity, STT fallback state, latency metrics, slot updates, conversation memory, and transcript turns.
+- **Location Verification**: Heard landmarks are searched through the geocoder, candidate confidence is shown to the operator, and browser geolocation can send a precise map pin through the `location_pin` WebSocket event.

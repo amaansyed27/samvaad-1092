@@ -1,17 +1,26 @@
 """
 Location resolver for Samvaad 1092.
 
-This module is intentionally deterministic for the hackathon demo: it gives the
-call flow map-like candidates without depending on a live maps API key. The same
-shape can later be backed by Google Places, MapMyIndia, or a government GIS
-service.
+This module uses a provider chain:
+
+1. Dynamic geocoder/search provider for arbitrary places the caller says.
+2. Optional browser/operator map pin reverse-geocoding.
+3. Small local gazetteer fallback for offline hackathon demos.
+
+The returned candidate shape is provider-neutral, so a production deployment can
+swap Nominatim for Google Places, MapMyIndia, Karnataka GIS, or BBMP ward data.
 """
 
 from __future__ import annotations
 
 from difflib import SequenceMatcher
+from functools import lru_cache
 from math import asin, cos, radians, sin, sqrt
 from typing import Any
+
+import httpx
+
+from app.config import settings
 
 
 BENGALURU_BOUNDS = {
@@ -71,10 +80,15 @@ def resolve_location_candidates(
     geo_pin: dict[str, Any] | None = None,
     limit: int = 3,
 ) -> list[dict[str, Any]]:
-    """Return ranked location candidates from known local places and optional pin."""
-    candidates: list[dict[str, Any]] = []
+    """Return ranked location candidates from dynamic geocoding plus fallback."""
     query_text = " ".join((query or "").lower().split())
     area_text = (area_hint or "").lower()
+    candidates: list[dict[str, Any]] = []
+
+    for resolved in _resolve_dynamic_candidates(query_text, area_hint, limit=limit):
+        candidate = dict(resolved)
+        candidate["reason"] = "Dynamic geocoder match for caller location"
+        candidates.append(candidate)
 
     for place in KNOWN_CIVIC_PLACES:
         score = _text_score(query_text, place)
@@ -90,11 +104,10 @@ def resolve_location_candidates(
         if score < 0.48:
             continue
         candidate = _candidate_from_place(place, min(score, 0.96))
-        candidate["reason"] = "Name or alias matches caller location"
+        candidate["reason"] = "Offline fallback name or alias match"
         candidates.append(candidate)
 
-    candidates.sort(key=lambda item: item["confidence"], reverse=True)
-    return candidates[:limit]
+    return _dedupe_and_rank(candidates, limit=limit)
 
 
 def candidate_from_geo_pin(pin: dict[str, Any]) -> dict[str, Any]:
@@ -102,7 +115,22 @@ def candidate_from_geo_pin(pin: dict[str, Any]) -> dict[str, Any]:
     lat = _to_float(pin.get("lat"))
     lng = _to_float(pin.get("lng"))
     accuracy = _to_float(pin.get("accuracy_m") or pin.get("accuracy") or 0.0) or 0.0
+    if lat is None or lng is None:
+        return {
+            "name": "Invalid map pin",
+            "address": "",
+            "area": "",
+            "landmark": "",
+            "lat": lat,
+            "lng": lng,
+            "confidence": 0.0,
+            "source": "map_pin",
+            "status": "pin_invalid",
+            "reason": "Map pin did not include valid latitude and longitude.",
+        }
     address = " ".join(str(pin.get("address") or "").split())
+    if not address:
+        address = _reverse_geocode_pin(lat, lng)
     in_bounds = is_pin_in_bengaluru(lat, lng)
     confidence = 0.88 if in_bounds else 0.55
     if accuracy and accuracy > 250:
@@ -144,6 +172,149 @@ def _candidate_from_place(place: dict[str, Any], confidence: float) -> dict[str,
         "status": "candidate",
         "broad": bool(place.get("broad")),
     }
+
+
+@lru_cache(maxsize=256)
+def _resolve_dynamic_candidates(query: str, area_hint: str = "", *, limit: int = 3) -> tuple[dict[str, Any], ...]:
+    provider = (settings.location_geocoder_provider or "disabled").lower()
+    if provider in {"", "disabled", "offline", "local"}:
+        return ()
+    if provider != "nominatim":
+        return ()
+    if not query or len(query) < 4:
+        return ()
+
+    search_text = _build_search_query(query, area_hint)
+    try:
+        response = httpx.get(
+            "https://nominatim.openstreetmap.org/search",
+            params={
+                "q": search_text,
+                "format": "jsonv2",
+                "addressdetails": 1,
+                "limit": max(1, min(limit, 5)),
+                "countrycodes": "in",
+                "bounded": 1,
+                "viewbox": f"{BENGALURU_BOUNDS['min_lng']},{BENGALURU_BOUNDS['max_lat']},{BENGALURU_BOUNDS['max_lng']},{BENGALURU_BOUNDS['min_lat']}",
+            },
+            headers={"User-Agent": settings.location_geocoder_user_agent},
+            timeout=settings.location_geocoder_timeout_seconds,
+        )
+        response.raise_for_status()
+        data = response.json()
+    except Exception:
+        return ()
+
+    candidates: list[dict[str, Any]] = []
+    for item in data[:limit]:
+        candidate = _candidate_from_nominatim(item, query)
+        if candidate:
+            candidates.append(candidate)
+    return tuple(candidates)
+
+
+@lru_cache(maxsize=128)
+def _reverse_geocode_pin(lat: float, lng: float) -> str:
+    provider = (settings.location_geocoder_provider or "disabled").lower()
+    if provider != "nominatim":
+        return ""
+    try:
+        response = httpx.get(
+            "https://nominatim.openstreetmap.org/reverse",
+            params={
+                "lat": lat,
+                "lon": lng,
+                "format": "jsonv2",
+                "addressdetails": 1,
+                "zoom": 18,
+            },
+            headers={"User-Agent": settings.location_geocoder_user_agent},
+            timeout=settings.location_geocoder_timeout_seconds,
+        )
+        response.raise_for_status()
+        data = response.json()
+    except Exception:
+        return ""
+    return " ".join(str(data.get("display_name") or "").split())
+
+
+def _candidate_from_nominatim(item: dict[str, Any], query: str) -> dict[str, Any] | None:
+    lat = _to_float(item.get("lat"))
+    lng = _to_float(item.get("lon"))
+    if lat is None or lng is None:
+        return None
+    if not is_pin_in_bengaluru(lat, lng):
+        return None
+
+    address = item.get("address") or {}
+    name = (
+        item.get("name")
+        or address.get("amenity")
+        or address.get("building")
+        or address.get("road")
+        or item.get("display_name")
+        or "Map search result"
+    )
+    display = " ".join(str(item.get("display_name") or name).split())
+    area = (
+        address.get("suburb")
+        or address.get("neighbourhood")
+        or address.get("city_district")
+        or address.get("city")
+        or address.get("town")
+        or ""
+    )
+    raw_importance = _to_float(item.get("importance")) or 0.0
+    text_score = SequenceMatcher(None, query, display.lower()).ratio()
+    confidence = min(0.93, max(0.55, 0.45 + text_score * 0.35 + raw_importance * 0.2))
+    category = item.get("category") or item.get("class") or "place"
+    place_type = item.get("type") or ""
+    broad = place_type in {"city", "state", "county", "airport"} or category in {"boundary"}
+    return {
+        "name": str(name),
+        "address": display,
+        "area": str(area),
+        "landmark": str(name),
+        "lat": lat,
+        "lng": lng,
+        "confidence": round(confidence, 2),
+        "source": "nominatim",
+        "status": "candidate",
+        "provider": "OpenStreetMap Nominatim",
+        "broad": broad,
+        "category": category,
+        "place_type": place_type,
+    }
+
+
+def _build_search_query(query: str, area_hint: str) -> str:
+    suffix_parts = []
+    if area_hint and area_hint.lower() not in query:
+        suffix_parts.append(area_hint)
+    if "bengaluru" not in query and "bangalore" not in query:
+        suffix_parts.append("Bengaluru")
+    if "karnataka" not in query:
+        suffix_parts.append("Karnataka")
+    return ", ".join([query, *suffix_parts])
+
+
+def _dedupe_and_rank(candidates: list[dict[str, Any]], *, limit: int) -> list[dict[str, Any]]:
+    ranked: dict[str, dict[str, Any]] = {}
+    for candidate in candidates:
+        key = _candidate_key(candidate)
+        existing = ranked.get(key)
+        if not existing or candidate.get("confidence", 0.0) > existing.get("confidence", 0.0):
+            ranked[key] = candidate
+    ordered = sorted(ranked.values(), key=lambda item: item.get("confidence", 0.0), reverse=True)
+    return ordered[:limit]
+
+
+def _candidate_key(candidate: dict[str, Any]) -> str:
+    lat = _to_float(candidate.get("lat"))
+    lng = _to_float(candidate.get("lng"))
+    if lat is not None and lng is not None:
+        return f"{round(lat, 4)}:{round(lng, 4)}"
+    return str(candidate.get("address") or candidate.get("name") or "").lower()
 
 
 def _text_score(query: str, place: dict[str, Any]) -> float:

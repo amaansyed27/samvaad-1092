@@ -3,6 +3,8 @@ Tests for the Verification State Machine.
 """
 
 import pytest
+from app.config import settings
+from app.core.location_resolver import resolve_location_candidates
 from app.core.verification_fsm import (
     VerificationEngine,
     InvalidTransition,
@@ -24,6 +26,14 @@ def engine():
 @pytest.fixture
 def session():
     return CallSession()
+
+
+@pytest.fixture(autouse=True)
+def disable_network_geocoder():
+    original = settings.location_geocoder_provider
+    settings.location_geocoder_provider = "disabled"
+    yield
+    settings.location_geocoder_provider = original
 
 
 class TestStateTransitions:
@@ -380,3 +390,30 @@ class TestHackathonGuardrails:
         assert memory["location_validation_status"] == "pin_verified"
         assert memory["ticket_ready"] is True
         assert session.call_slots["geo_pin"]["lat"] == 12.9784
+
+    def test_dynamic_geocoder_candidate_is_used_before_local_fallback(self, monkeypatch):
+        settings.location_geocoder_provider = "nominatim"
+
+        class FakeResponse:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return [
+                    {
+                        "name": "Dynamic Ward Office",
+                        "display_name": "Dynamic Ward Office, HSR Layout, Bengaluru, Karnataka, India",
+                        "lat": "12.9121",
+                        "lon": "77.6446",
+                        "importance": 0.7,
+                        "category": "office",
+                        "type": "government",
+                        "address": {"suburb": "HSR Layout", "city": "Bengaluru"},
+                    }
+                ]
+
+        monkeypatch.setattr("app.core.location_resolver.httpx.get", lambda *args, **kwargs: FakeResponse())
+        candidates = resolve_location_candidates("dynamic ward office hsr layout")
+        assert candidates[0]["source"] == "nominatim"
+        assert candidates[0]["name"] == "Dynamic Ward Office"
+        assert candidates[0]["area"] == "HSR Layout"

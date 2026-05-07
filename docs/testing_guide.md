@@ -96,6 +96,15 @@ The goal is to ensure no citizen data reaches the LLM swarm.
 - Expected:
   - `ticket_ready=true`.
   - Assistant asks at most one optional operational question, such as when the issue started.
+- Say: "Power cuts near Espelad Apartments."
+- Expected:
+  - Dashboard shows a dynamic/location candidate or fallback candidate.
+  - Required slot becomes `location_confirm` if the match is weak.
+  - Assistant asks whether the heard place is correct before treating it as verified.
+- In debug mode, click **Send Pin**.
+- Expected:
+  - A `location_resolution` event appears.
+  - Slots show `location_source=map_pin` and `location_validation_status=pin_verified` when the pin is inside service bounds.
 - Say: "Just create ticket."
 - Expected:
   - Optional questions stop.

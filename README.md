@@ -11,6 +11,7 @@ Current live-demo capabilities:
 - Sarvam STT/TTS voice-to-voice loop with REST STT fallback diagnostics.
 - Conversational call-center intake that acknowledges the caller, asks one question at a time, verifies understanding, and logs a ticket.
 - Deterministic guardrails for common civic categories such as BESCOM power-cut complaints.
+- Dynamic location disambiguation with map/geocoder candidates, browser map-pin verification, and offline fallback.
 - Full raw/scrubbed transcript, caller/assistant turn log, extracted intake memory, and learning signals in SQLite.
 - Twilio barge-in handling with echo protection so assistant speech is not cancelled by line noise.
 
@@ -82,6 +83,16 @@ The Live Transcript panel includes transport-level debug events:
 - `STT: empty_transcript` or `rest_timeout`: audio arrived but STT could not produce text.
 
 For phone demos, run ngrok against the same backend port used by the dashboard proxy, normally `8000`.
+
+### Dynamic Location Verification
+Location is not trusted only because STT heard a landmark. The backend first searches a dynamic geocoder (`LOCATION_GEOCODER_PROVIDER=nominatim` by default), then falls back to a small local demo gazetteer only if the provider is disabled or unavailable. If a heard landmark is ambiguous or likely misread, the assistant asks the caller to confirm the candidate or the operator can press **Send Pin** in debug mode to attach a browser map pin.
+
+Useful config:
+```env
+LOCATION_GEOCODER_PROVIDER=nominatim
+LOCATION_GEOCODER_TIMEOUT_SECONDS=0.65
+LOCATION_GEOCODER_USER_AGENT=Samvaad1092-Hackathon/0.2
+```
 
 ---
 

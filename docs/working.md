@@ -50,9 +50,20 @@ The current live call path is optimized for first-level grievance intake:
 2. The language choice locks STT/TTS for the rest of the call.
 3. The assistant acknowledges the issue before asking for details.
 4. Required fields are collected first: issue, department, and usable location.
-5. Optional details are asked only when useful: time, frequency, whether the issue is happening now, what the caller already tried, authority contact, and prior complaint number.
-6. If the caller says "just create ticket" or sounds urgent/frustrated, optional questions are skipped and the assistant verifies immediately.
-7. Confirmed calls persist the full turn log and structured memory to the Civic Inbox.
+5. Location is validated through the dynamic location resolver. Heard landmarks are searched through the configured geocoder, map candidates are shown on the dashboard, and weak matches trigger a caller confirmation or operator map pin.
+6. Optional details are asked only when useful: time, frequency, whether the issue is happening now, what the caller already tried, authority contact, and prior complaint number.
+7. If the caller says "just create ticket" or sounds urgent/frustrated, optional questions are skipped and the assistant verifies immediately.
+8. Confirmed calls persist the full turn log and structured memory to the Civic Inbox.
+
+## Dynamic Location Resolver
+
+The resolver is deliberately provider-neutral:
+
+1. Search the configured dynamic geocoder (`LOCATION_GEOCODER_PROVIDER=nominatim` by default).
+2. Use browser/operator map pin data when the caller shares location from the dashboard debug mode.
+3. Fall back to the local demo gazetteer only if the geocoder is disabled or unavailable.
+
+The FSM stores `map_candidates`, `geo_pin`, `location_source`, `location_confirmed`, and `location_validation_status` in conversation memory. If STT hears a difficult landmark such as "Espelad", the system can surface likely candidates and ask: "I heard the location as Esplanade Apartments. Is that correct?" This prevents silent dispatch to a wrong location.
 
 ## Audio and STT Diagnostics
 

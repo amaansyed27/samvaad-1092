@@ -64,6 +64,12 @@ class Settings(BaseSettings):
     # ── Database (Learning Signals) ──────────────────────────────────────
     database_url: str = "sqlite+aiosqlite:///./samvaad_1092.db"
 
+    # Location resolver. "nominatim" gives a no-key dynamic demo path;
+    # "disabled" keeps the system fully offline with the local fallback.
+    location_geocoder_provider: str = "nominatim"
+    location_geocoder_timeout_seconds: float = 0.65
+    location_geocoder_user_agent: str = "Samvaad1092-Hackathon/0.2"
+
     # ── Dashboard ────────────────────────────────────────────────────────
     dashboard_origin: str = "http://localhost:5173"
 
