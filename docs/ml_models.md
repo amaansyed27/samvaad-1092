@@ -60,3 +60,10 @@ To ensure absolute uptime and cognitive depth, Samvaad 1092 does not rely on a s
 Audio processing relies on Indian DPI APIs tailored for regional dialects.
 - **STT (Saaras V3)**: Converts 16kHz PCM audio to text, automatically detecting the language (Kannada, Hindi, English).
 - **TTS (Bulbul V3)**: Synthesizes the AI's restatement into natural-sounding speech in the caller's native language.
+
+### Current STT/TTS Guardrails
+- The caller's IVR choice locks the language code for the call (`en-IN`, `kn-IN`, or `hi-IN`).
+- Streaming STT is used for low-latency partials. If no final transcript arrives, the backend sends the buffered utterance through Sarvam REST STT.
+- The dashboard emits `STT:*` diagnostic events so demo operators can distinguish audio transport failure from STT failure.
+- Common civic categories use deterministic guardrails before ML/LLM output is trusted. For example, electrical/current/power-cut phrasing is forced to `BESCOM` and `power_outage` even if the fast classifier is noisy.
+- Agent corrections still enter `ml_training_data` as active-learning signals for newer niche complaints and edge cases.

@@ -6,6 +6,14 @@ Samvaad 1092 is a production-grade, voice-to-voice AI assistive layer built for 
 
 It utilizes a Sovereign Hybrid Architecture, blending fast local Machine Learning (Scikit-Learn Naive Bayes department routing, Acoustic Distress analysis, local PII scrubbing) with powerful Swarm LLM Intelligence and Sarvam AI's speech bridge (Saaras V3 STT & Bulbul V3 TTS).
 
+Current live-demo capabilities:
+- IVR language lock for English, Kannada, and Hindi.
+- Sarvam STT/TTS voice-to-voice loop with REST STT fallback diagnostics.
+- Conversational call-center intake that acknowledges the caller, asks one question at a time, verifies understanding, and logs a ticket.
+- Deterministic guardrails for common civic categories such as BESCOM power-cut complaints.
+- Full raw/scrubbed transcript, caller/assistant turn log, extracted intake memory, and learning signals in SQLite.
+- Twilio barge-in handling with echo protection so assistant speech is not cancelled by line noise.
+
 ---
 
 ## 📖 Documentation
@@ -64,6 +72,16 @@ You will see the **Civic Grievance Management System (CGMS)**.
 - **Live Call (Terminal)**: To test live functionality, either:
   1. Click the "Bug / Debug" icon in the bottom left of the sidebar to open the web simulator.
   2. Or, set up Twilio + ngrok (port 8000) to call the system directly from your real mobile phone. The dashboard will automatically switch to Live Terminal mode when it detects an incoming call.
+
+### Live Call Diagnostics
+The Live Transcript panel includes transport-level debug events:
+- `AUDIO: speech_started` / `speech_ended`: Twilio VAD saw caller speech.
+- `STT: audio_end_received`: backend received an utterance boundary.
+- `STT: rest_fallback_started`: buffered audio was sent through Sarvam REST STT.
+- `STT: transcript_ready`: a usable transcript was produced.
+- `STT: empty_transcript` or `rest_timeout`: audio arrived but STT could not produce text.
+
+For phone demos, run ngrok against the same backend port used by the dashboard proxy, normally `8000`.
 
 ---
 

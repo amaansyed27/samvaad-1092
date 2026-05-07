@@ -39,3 +39,30 @@ This document details the step-by-step flow of a single emergency call within th
 2. If confirmed, the call state becomes `VERIFIED`. The AI plays a final dispatch message ("Help is on the way").
 3. **Agent-in-the-Loop**: The human operator can manually edit the AI's classification on the dashboard.
 4. The final verified data, along with any agent corrections, is saved to the **SQLite database**. These are "Learning Signals" used to actively retrain the Local ML Department Classifier.
+
+---
+
+## Current Conversational Intake Flow
+
+The current live call path is optimized for first-level grievance intake:
+
+1. The caller selects language through IVR: English, Kannada, or Hindi.
+2. The language choice locks STT/TTS for the rest of the call.
+3. The assistant acknowledges the issue before asking for details.
+4. Required fields are collected first: issue, department, and usable location.
+5. Optional details are asked only when useful: time, frequency, whether the issue is happening now, what the caller already tried, authority contact, and prior complaint number.
+6. If the caller says "just create ticket" or sounds urgent/frustrated, optional questions are skipped and the assistant verifies immediately.
+7. Confirmed calls persist the full turn log and structured memory to the Civic Inbox.
+
+## Audio and STT Diagnostics
+
+The Live Transcript panel shows audio transport diagnostics:
+
+- `AUDIO: speech_started`: Twilio VAD detected caller speech.
+- `AUDIO: speech_ended`: Twilio decided the utterance ended.
+- `STT: audio_end_received`: backend received an utterance boundary and has buffered audio.
+- `STT: rest_fallback_started`: streaming STT did not produce a final transcript, so buffered audio is sent through Sarvam REST STT.
+- `STT: transcript_ready`: STT produced usable text.
+- `STT: empty_transcript` / `rest_timeout`: audio arrived but STT failed to produce text.
+
+Barge-in is protected against echo: Twilio frames only cancel assistant playback when they are marked as real caller speech, not merely background audio.

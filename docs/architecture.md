@@ -74,3 +74,11 @@ A fault-tolerant routing engine that guarantees uptime and speed. Instead of rel
 
 ### 4. Civic Analytics & Persistence
 An asynchronous SQLite database (`aiosqlite`) captures the full lifecycle of a call. Crucially, when human operators manually edit an AI's analysis via the Dashboard, these corrections are saved as "Learning Signals" to improve future model fine-tuning. The Dashboard pulls real-time analytics from this DB to display department loads and resolution rates.
+
+## Current Live Demo Architecture Update
+
+The live path now includes a deterministic call-center intake layer on top of the FSM. The assistant acknowledges the grievance, asks one question at a time, and verifies only after the required ticket fields are ready: issue, department, and usable location. Optional operational fields are stored when available: time, frequency, caller attempts, authority contact, and previous complaint ID.
+
+Persistence has been expanded beyond a single transcript. Each call record stores raw transcript, scrubbed transcript, caller/assistant turn log, structured conversation memory, agent corrections, and active-learning feedback type.
+
+Twilio turn-taking is explicit. VAD decides utterance boundaries, Sarvam streaming/REST STT transcribes, and barge-in only cancels assistant playback when Twilio marks a real speech frame. During assistant speech, echo protection raises the VAD threshold so line noise does not cancel TTS.

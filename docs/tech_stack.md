@@ -35,3 +35,10 @@ The platform is divided into a high-concurrency Python backend, a powerful Machi
 - **Dependency Management**: `pip` (Backend), `npm` (Frontend)
 - **Environment Management**: `.env` (python-dotenv)
 - **Tunneling (For Twilio)**: `ngrok` / `localtunnel`
+
+## Current Voice Runtime Details
+- **IVR / Language Lock**: Twilio TwiML gathers `1`, `2`, or `3` and passes `en-IN`, `kn-IN`, or `hi-IN` into the media stream.
+- **STT Path**: Sarvam streaming STT is attempted first; buffered WAV is sent through Sarvam REST STT when streaming does not emit a final transcript.
+- **TTS Path**: Sarvam Bulbul v3 uses a light female voice configuration and streams audio chunks back to browser/Twilio.
+- **Turn-Taking**: Twilio VAD uses RMS thresholds and assistant-echo protection. Barge-in is explicit and does not cancel playback on every inbound frame.
+- **Dashboard Diagnostics**: WebSocket events expose audio activity, STT fallback state, latency metrics, slot updates, conversation memory, and transcript turns.

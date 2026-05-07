@@ -31,3 +31,9 @@ The dashboard is designed as a Civic Grievance Management System (CGMS). The ope
 ### 5. Acoustic Superiority vs Semantic Validation
 Words lie, but panic doesn't. 
 By analyzing the raw acoustic frequencies of the caller's voice using the **Acoustic Guardian**, the system detects acoustic distress. However, to prevent false positives from "bad microphones", this score is fed to the LLM to cross-reference *how they sound* with *what they say*.
+
+### 6. Call-Center Conversation Over Slot Filling
+The current demo treats the AI as a first-level grievance intake agent, not a form bot. It acknowledges the caller, reassures them that a ticket can be created, asks one missing detail at a time, and stops optional questioning when the caller is urgent or asks to proceed. This preserves the problem statement's core principle: correct understanding before response, without making citizens repeat themselves unnecessarily.
+
+### 7. Observable Failure Modes
+Live voice systems fail in the transport layer as often as in the AI layer. Samvaad therefore exposes audio and STT status events in the dashboard. Operators can see whether Twilio detected speech, whether the backend buffered audio, whether Sarvam fallback ran, and whether the transcript was empty. This makes the demo explainable and improves government deployability.

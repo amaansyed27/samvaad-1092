@@ -77,3 +77,39 @@ The goal is to ensure no citizen data reaches the LLM swarm.
 | **Dialect/Cultural Context** | LLM extracts specific location/cultural hints | [ ] |
 | **Learning from Feedback** | Agent Edits are saved to SQLite DB | [ ] |
 | **Scalability (Tech Design)** | Fast Local ML routing before heavy LLM processing | [ ] |
+
+---
+
+## Current Demo Acceptance Tests
+
+### Conversational Power-Cut Intake
+- Select English.
+- Say: "I am facing too many electrical cuts at my house."
+- Expected:
+  - Transcript appears as `FINAL`.
+  - Department becomes `BESCOM`.
+  - Required slot becomes `landmark`.
+  - Assistant says it understands the problem and asks for area/nearest landmark.
+
+### Location and Optional Detail
+- Say: "Whitefield near Vydehi hospital."
+- Expected:
+  - `ticket_ready=true`.
+  - Assistant asks at most one optional operational question, such as when the issue started.
+- Say: "Just create ticket."
+- Expected:
+  - Optional questions stop.
+  - Assistant reads back the issue/location/department and asks for confirmation.
+
+### Twilio Audio Debugging
+During a live phone call, verify that the Live Transcript shows:
+- `AUDIO: speech_started` when the caller speaks.
+- `STT: audio_end_received` after the utterance.
+- `STT: transcript_ready` before `FINAL`.
+
+If `STT: empty_transcript` appears, audio reached the backend but Sarvam returned no text. If no `AUDIO:*` event appears, Twilio audio is not reaching the backend.
+
+### Language Lock
+- Press `1`: assistant continues in English.
+- Press `2`: assistant acknowledges in Kannada and uses `kn-IN` for Sarvam TTS/STT.
+- Press `3`: assistant acknowledges in Hindi and uses `hi-IN` for Sarvam TTS/STT.
