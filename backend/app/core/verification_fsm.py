@@ -2827,12 +2827,12 @@ def _build_conversational_restatement(
                 return "मैं समझ गई कि रास्ता असुरक्षित लग रहा है. मैं मदद करूंगी. किस मेट्रो स्टेशन, सड़क, या नजदीकी लैंडमार्क से टिकट बनाऊं?"
             if language == "kannada":
                 return "ರಸ್ತೆ ಸುರಕ್ಷಿತವಾಗಿಲ್ಲ ಎಂದು ಅರ್ಥವಾಗಿದೆ. ನಾನು ಸಹಾಯ ಮಾಡುತ್ತೇನೆ. ಯಾವ ಮೆಟ್ರೋ ನಿಲ್ದಾಣ, ರಸ್ತೆ ಅಥವಾ ಹತ್ತಿರದ ಗುರುತನ್ನು ಟಿಕೆಟ್‌ನಲ್ಲಿ ಹಾಕಲಿ?"
-            return "I understand this feels unsafe. I will help raise this immediately. Which metro station, road name, or nearest landmark should I put on the ticket?"
+            return "I have noted missing streetlights and the safety concern. Tell me the exact metro station, road or cross, and nearest landmark."
         if language == "hindi":
             return "मैं आपकी समस्या समझ गई. मैं तुरंत टिकट बनाने में मदद करूंगी. टिकट में कौन सा क्षेत्र और नजदीकी लैंडमार्क डालूं?"
         if language == "kannada":
             return "ನಿಮ್ಮ ಸಮಸ್ಯೆ ಅರ್ಥವಾಗಿದೆ. ತಕ್ಷಣ ಟಿಕೆಟ್ ಮಾಡಲು ಸಹಾಯ ಮಾಡುತ್ತೇನೆ. ಟಿಕೆಟ್‌ನಲ್ಲಿ ಯಾವ ಪ್ರದೇಶ ಮತ್ತು ಹತ್ತಿರದ ಗುರುತು ಹಾಕಲಿ?"
-        return "I understand your problem. I will help create a ticket immediately. Which area and nearest landmark should I put on the ticket?"
+        return f"I have noted the {issue}. To file it correctly, tell me the area and nearest landmark."
 
     if session.required_slot == "location_confirm":
         candidate = (memory.get("map_candidates") or [{}])[0]
@@ -2848,13 +2848,13 @@ def _build_conversational_restatement(
             return "मैं अभी टिकट बना सकती हूं. एक बात बताइए, यह कब शुरू हुआ या आम तौर पर किस समय होता है?"
         if language == "kannada":
             return "ನಾನು ಈಗ ಟಿಕೆಟ್ ದಾಖಲಿಸಬಹುದು. ಒಂದು ಮಾಹಿತಿ ಹೇಳಿ, ಇದು ಯಾವಾಗ ಶುರುವಾಯಿತು ಅಥವಾ ಸಾಮಾನ್ಯವಾಗಿ ಯಾವ ಸಮಯದಲ್ಲಿ ಆಗುತ್ತದೆ?"
-        return "I can log this now. One quick detail: when did this start, or when does it usually happen?"
+        return "I can log this now. When did it start, or when does it usually happen?"
     if session.required_slot == "frequency":
         if language == "hindi":
             return "ठीक है. क्या यह अभी हो रहा है या बार-बार हो रहा है?"
         if language == "kannada":
             return "ಸರಿ. ಇದು ಈಗ ನಡೆಯುತ್ತಿದೆಯೇ ಅಥವಾ ಮರುಮರು ಆಗುತ್ತಿದೆಯೇ?"
-        return "Got it. Is this happening right now, or has it been happening repeatedly?"
+        return "Got it. Should I mark this as happening now, happening repeatedly, or both?"
     if session.required_slot in {"caller_tried", "authority_contacted"}:
         if language == "hindi":
             return f"समझ गई. क्या आपने पहले {department} से संपर्क किया है या यह शिकायत पहले दर्ज कराई है?"
@@ -2894,7 +2894,7 @@ def _build_conversational_restatement(
                     parts.append(f"reference {ref}")
             summary = ", ".join(part for part in parts if part)
             line_department = memory.get("line_department") or _line_department_for(department, memory.get("issue"))
-            return f"Got it. I will register this grievance for {summary}, and route it to {line_department}. Is that correct?"
+            return f"Please confirm: {summary}. Department: {line_department}. Should I register this ticket?"
         detail = ""
         if memory.get("frequency"):
             if language == "hindi":
@@ -2917,7 +2917,16 @@ def _build_conversational_restatement(
         prefix = "I understand this has been frustrating. " if memory.get("sentiment") in {"angry", "frustrated"} else ""
         line_department = memory.get("line_department") or _line_department_for(department, memory.get("issue"))
         service_detail = f" for {memory['service_or_scheme']}" if memory.get("service_or_scheme") and memory["service_or_scheme"] not in issue else ""
-        return f"{prefix}Let me confirm: {issue}{service_detail} at {location}.{detail} I will register this with {line_department or department}. Is that correct?"
+        timing = ""
+        if memory.get("frequency"):
+            timing = f" Timing: {memory['frequency']}."
+        elif memory.get("started_at_or_time"):
+            timing = f" Timing: {memory['started_at_or_time']}."
+        return (
+            f"{prefix}Please confirm: {issue}{service_detail}. "
+            f"Location: {location}.{timing} "
+            f"Department: {line_department or department}. Should I register this ticket?"
+        )
 
     return ""
 
@@ -3005,7 +3014,7 @@ def _build_confirmation_explanation(session: CallSession) -> str:
         detail = f" Idu {time_detail} inda aguttide." if time_detail else ""
         return f"Kshamisi, nanna artha: {location} nalli {issue}.{detail} Idannu {department} ge kaluhisuttene. Idu sariyagideya?"
     detail = f" It has been happening {time_detail}." if time_detail else ""
-    return f"Sorry, I meant: repeated power cuts at {location}.{detail} I will send this to {department}. Is that correct?"
+    return f"Sorry, I meant: {issue} at {location}.{detail} I will send this to {department}. Is that correct?"
 
 
 def _build_dispatch_message(session: CallSession) -> str:
@@ -3029,7 +3038,13 @@ def _build_dispatch_message(session: CallSession) -> str:
     if language == "kannada":
         return f"ನಿಮ್ಮ ಟಿಕೆಟ್ {session.ticket_id} {department} ಗೆ ದಾಖಲಾಗಿದೆ. ಮುಂದಿನ ಕ್ರಮಕ್ಕೆ ಕಳುಹಿಸುತ್ತಿದ್ದೇವೆ. ಹೆಚ್ಚಿನ ವಿವರ ಬೇಕಾದರೆ ಪ್ರತಿನಿಧಿ ಇದೇ ಸಂಖ್ಯೆಗೆ ಸಂಪರ್ಕಿಸುತ್ತಾರೆ. ಸ್ಥಿತಿ ತಿಳಿಯಲು 1092 ಗೆ ಕರೆ ಮಾಡಿ ಈ ಸಂಖ್ಯೆಯನ್ನು ಹೇಳಿ. ಧನ್ಯವಾದಗಳು."
     location_phrase = f" at {location}" if location else ""
-    return f"Your grievance for {issue}{location_phrase} has been registered with {department}. Your ticket number is {session.ticket_id}. We will send it to the concerned line official for action, and if more details are needed, a representative will contact you on this same number. Use this ticket number to check status or quote it if a representative contacts you.{helpline_note} The ticket details have also been sent by SMS. Thank you for calling Karnataka 1092."
+    return (
+        f"Registered: {issue}{location_phrase}. Department: {department}. "
+        f"Ticket: {session.ticket_id}. We will send it to the concerned line official for action. "
+        f"If more details are needed, a representative will contact you on this same number. "
+        f"Use this ticket number to check status with Karnataka 1092.{helpline_note} "
+        "The ticket details have also been sent by SMS."
+    )
 
 
 def _build_human_takeover_message(session: CallSession, reason: str) -> str:

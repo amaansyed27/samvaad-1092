@@ -156,7 +156,7 @@ class TestHackathonGuardrails:
         assert "1092" in message
         assert "representative will contact you on this same number" in message
         assert "sent by SMS" in message
-        assert "Thank you" in message
+        assert "Registered:" in message
 
     def test_power_issue_deterministic_department_overrides_bad_ml_route(self, session):
         session.department_assigned = "BBMP"
@@ -198,7 +198,7 @@ class TestHackathonGuardrails:
         data = _build_fast_analysis(session, session.scrubbed_transcript, 0.2)
         session.analysis_result = AnalysisResult(**data)
         message = _build_restatement(session)
-        assert "I understand your problem" in message
+        assert "I have noted the repeated power cuts" in message
         assert "nearest landmark" in message
 
     def test_specific_location_asks_optional_detail_before_confirmation(self, session):
@@ -309,6 +309,7 @@ class TestHackathonGuardrails:
         assert memory["location_validation_status"] == "needs_correction"
         assert "staring" not in memory["landmark"].lower()
         assert "metro station" in message
+        assert "safety concern" in message
 
     def test_dummy_prank_call_gets_guardrail_warning(self, session):
         data = _build_fast_analysis(session, "this is a prank test call haha no issue", 0.1)
@@ -349,6 +350,7 @@ class TestHackathonGuardrails:
         assert "same mobile" not in message.lower()
         assert "Mysuru. Yes" not in message
         assert "Food and Civil Supplies department" in message
+        assert message.startswith("Please confirm:")
 
     def test_labour_wages_routes_to_labour_department(self, session):
         data = _build_fast_analysis(
@@ -646,4 +648,21 @@ class TestHackathonGuardrails:
         event = await engine.receive_transcript(session, "What do you mean by it occurs?")
         assert event["event"] == "clarification_required"
         assert "Sorry, I meant" in event["assistant_message"]
+        assert "power cuts" in event["assistant_message"].lower() or "power outage" in event["assistant_message"].lower()
         assert "It occurs" not in event["assistant_message"]
+
+    def test_web_confirmation_summary_is_direct_and_structured(self, session):
+        data = _build_fast_analysis(
+            session,
+            "No street lights at Indiranagar Metro Station, Fifth Cross, Esplanade Apartments at night",
+            0.2,
+        )
+        session.analysis_result = AnalysisResult(**data)
+        message = _build_restatement(session)
+
+        assert message.startswith("Please confirm:")
+        assert "streetlight" in message.lower()
+        assert "Location:" in message
+        assert "Timing:" in message
+        assert "Department:" in message
+        assert "Should I register this ticket?" in message
