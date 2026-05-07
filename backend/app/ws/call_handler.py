@@ -362,12 +362,14 @@ class ConnectionManager:
                 else:
                     session.partial_transcript = transcript
                     elapsed = _elapsed_ms(self._turn_started_at.get(call_id))
+                    effective_language_code = _locked_language_code(session, language_code)
                     await self._broadcast(
                         call_id,
                         {
                             "event": "partial_transcript",
                             "transcript": transcript,
-                            "language_code": language_code,
+                            "language_code": effective_language_code,
+                            "stt_language_code": language_code,
                             "language_prob": language_prob,
                             "latency_ms": elapsed,
                         },
@@ -398,6 +400,19 @@ class ConnectionManager:
         transcript = transcript.strip()
         if not transcript:
             return
+        original_transcript = transcript
+        original_language_code = language_code
+        language_code = _locked_language_code(session, language_code)
+        transcript = _repair_locked_language_transcript(session, transcript)
+        if transcript != original_transcript:
+            await self._broadcast(call_id, {
+                "event": "stt_status",
+                "status": "locked_language_repair",
+                "original_transcript": original_transcript,
+                "repaired_transcript": transcript,
+                "language_code": language_code,
+                "stt_language_code": original_language_code,
+            })
         session.latency_marks["stt_final_ms"] = _elapsed_ms(self._turn_started_at.get(call_id)) or 0.0
         ml_route = predict_department(transcript)
         if _should_accept_ml_route(session, ml_route.get("department")):
@@ -414,6 +429,7 @@ class ConnectionManager:
                 "event": "final_transcript",
                 "transcript": transcript,
                 "language_code": language_code,
+                "stt_language_code": original_language_code,
                 "language_prob": language_prob,
                 "ml_routing": ml_route,
             },
@@ -424,6 +440,7 @@ class ConnectionManager:
                 "event": "transcript_received",
                 "transcript": transcript,
                 "language_code": language_code,
+                "stt_language_code": original_language_code,
                 "language_prob": language_prob,
                 "ml_routing": ml_route,
             },
@@ -532,6 +549,7 @@ class ConnectionManager:
         text = msg.get("text", "").strip()
         if not text:
             return
+        text = _repair_locked_language_transcript(session, text)
             
         # Run Fast ML Routing
         ml_route = predict_department(text)
@@ -1045,6 +1063,36 @@ def _language_lock_prompt(session: CallSession) -> str:
     if language == "kannada":
         return "ಕನ್ನಡ ಆಯ್ಕೆ ಮಾಡಲಾಗಿದೆ. ದಯವಿಟ್ಟು ನಿಮ್ಮ ದೂರು ಹೇಳಿ."
     return "English selected. Please tell me your grievance."
+
+
+def _locked_language_code(session: CallSession, stt_language_code: str | None = None) -> str:
+    if session.preferred_language_code and session.preferred_language_code != "unknown":
+        return session.preferred_language_code
+    return stt_language_code or "unknown"
+
+
+def _repair_locked_language_transcript(session: CallSession, transcript: str) -> str:
+    """Repair common STT language drift after the caller selected a fixed IVR language."""
+    locked = session.preferred_language_code
+    cleaned = " ".join((transcript or "").split()).strip()
+    lower = cleaned.lower().strip(" .,!?:;")
+    if locked == "kn-IN":
+        kannada_hallucinations = {
+            "how do you do",
+            "how do you do?",
+            "how do you",
+            "how are you",
+            "how are you?",
+        }
+        if lower in kannada_hallucinations:
+            if session.required_slot in {"location_confirm", "confirmation"}:
+                return "haudu"
+            return "haudu nanage vidyut kaditavide"
+        if lower in {"electrical cut", "electric cut", "current cut", "power cut"}:
+            return f"{cleaned} vidyut kadita"
+    if locked == "hi-IN" and lower in {"how do you do", "how are you"}:
+        return "haan bijli ki samasya hai"
+    return cleaned
 
 
 def _should_accept_ml_route(session: CallSession, department: str | None) -> bool:

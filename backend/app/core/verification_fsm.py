@@ -760,7 +760,7 @@ def _update_conversation_memory(
     text = " ".join((transcript or "").split())
     lower = text.lower()
 
-    if session.required_slot == "location_confirm" and _detect_confirmation_intent(text) is True:
+    if session.required_slot == "location_confirm" and _is_affirmative_location_confirmation(text):
         _accept_top_map_candidate(memory)
 
     if emergency_type and emergency_type != "other":
@@ -936,6 +936,8 @@ def _extract_standalone_location(text: str) -> str:
     cleaned = text.strip(" .,:;")
     lower = cleaned.lower()
     if not cleaned or len(cleaned.split()) > 8:
+        return ""
+    if _is_non_location_phrase(cleaned):
         return ""
     location_terms = set(_BROAD_LOCATION_TERMS) | _SPECIFIC_LOCATION_MARKERS
     if any(term in lower for term in location_terms):
@@ -1225,7 +1227,26 @@ def _preferred_language(session: CallSession, detected: str | None = None) -> st
 
 def _infer_department(transcript: str) -> str:
     text = transcript.lower()
-    if any(term in text for term in ("power", "electric", "electrical", "electricity", "current", "voltage", "transformer", "streetlight")):
+    if any(term in text for term in (
+        "power",
+        "electric",
+        "electrical",
+        "electricity",
+        "current",
+        "voltage",
+        "transformer",
+        "streetlight",
+        "vidyut",
+        "vidyuth",
+        "vidyuta",
+        "ವಿದ್ಯುತ್",
+        "karentu",
+        "current hogide",
+        "current illa",
+        "kadita",
+        "kaḍita",
+        "kaditavide",
+    )):
         return "BESCOM"
     if any(term in text for term in ("water", "sewage", "drainage", "pipe", "cauvery")):
         return "BWSSB"
@@ -1240,15 +1261,35 @@ def _infer_department(transcript: str) -> str:
 
 def _infer_emergency_type(transcript: str, department: str) -> str:
     text = transcript.lower()
-    if any(term in text for term in ("power", "electric", "electrical", "electricity", "current", "voltage", "transformer", "cut", "cuts")):
+    if any(term in text for term in (
+        "power",
+        "electric",
+        "electrical",
+        "electricity",
+        "current",
+        "voltage",
+        "transformer",
+        "cut",
+        "cuts",
+        "vidyut",
+        "vidyuth",
+        "vidyuta",
+        "ವಿದ್ಯುತ್",
+        "karentu",
+        "current hogide",
+        "current illa",
+        "kadita",
+        "kaḍita",
+        "kaditavide",
+    )):
         return "power_outage"
     if "streetlight" in text:
         return "streetlights"
     if department == "BWSSB":
         return "water_supply"
-    if department == "BBMP" and "road" in text:
+    if department == "BBMP" and any(term in text for term in ("road", "pothole", "street", "footpath")):
         return "road_damage"
-    if department == "BBMP":
+    if department == "BBMP" and any(term in text for term in ("garbage", "waste", "trash", "dump", "overflow")):
         return "waste_management"
     if department == "POLICE" and "noise" in text:
         return "noise_disturbance"
@@ -1257,7 +1298,7 @@ def _infer_emergency_type(transcript: str, department: str) -> str:
 
 def _has_issue_signal(transcript: str, department: str, emergency_type: str) -> bool:
     text = transcript.lower()
-    if department != "OTHER" or emergency_type != "other":
+    if emergency_type != "other":
         return True
     issue_terms = (
         "problem",
@@ -1282,6 +1323,14 @@ def _has_issue_signal(transcript: str, department: str, emergency_type: str) -> 
         "electricity",
         "power",
         "road",
+        "vidyut",
+        "vidyuth",
+        "vidyuta",
+        "ವಿದ್ಯುತ್",
+        "karentu",
+        "kadita",
+        "kaḍita",
+        "kaditavide",
     )
     return any(term in text for term in issue_terms)
 
@@ -1708,6 +1757,18 @@ def _is_non_location_phrase(text: str | None) -> bool:
         "reported",
         "called",
     )
+    chatter_terms = (
+        "how do you do",
+        "how are you",
+        "hello",
+        "hi",
+        "what do you mean",
+        "i don't understand",
+        "i do not understand",
+        "not clear",
+    )
+    if lower in chatter_terms or any(lower.startswith(f"{term} ") for term in chatter_terms):
+        return True
     if any(term in lower for term in time_terms) and not any(marker in lower for marker in _SPECIFIC_LOCATION_MARKERS):
         return True
     if any(term in lower for term in complaint_terms):
@@ -1726,7 +1787,7 @@ def _detect_text_language(transcript: str) -> str:
     text = transcript.lower()
     if any(term in text for term in ("hai", "nahi", "haan", "bijli", "paani", "shikayat")):
         return "hindi"
-    if any(term in text for term in ("illa", "beku", "madam", "sari", "vidyut", "neeru", "haudu")):
+    if any(term in text for term in ("illa", "beku", "madam", "sari", "vidyut", "vidyuth", "vidyuta", "neeru", "haudu", "howdu", "kadita", "kaḍita", "karentu")):
         return "kannada"
     return "english"
 
@@ -1804,6 +1865,15 @@ def _detect_confirmation_intent(text: str) -> bool | None:
     if has_yes and not has_detail:
         return True
     return None
+
+
+def _is_affirmative_location_confirmation(text: str) -> bool:
+    lower = " ".join((text or "").lower().strip(" .,!?:;").split())
+    if not lower:
+        return False
+    if any(_contains_token(lower, token) for token in _NO_TOKENS):
+        return False
+    return any(_contains_token(lower, token) for token in _YES_TOKENS)
 
 
 def _is_confirmation_clarification_question(text: str) -> bool:
@@ -1901,9 +1971,9 @@ def _build_conversational_restatement(
         candidate = (memory.get("map_candidates") or [{}])[0]
         place = candidate.get("name") or memory.get("normalized_location") or location
         if language == "hindi":
-            return f"Mujhe location {place} jaisi sunai di. Kya yahi sahi jagah hai? Agar nahi, area ya map pin bhej dijiye."
+            return f"मुझे स्थान {place} जैसा सुनाई दिया. क्या यही सही जगह है? अगर नहीं, सही क्षेत्र या मैप पिन दीजिए."
         if language == "kannada":
-            return f"Location {place} anta kelisitu. Idu sariyana jagave? Illandre area athava map pin kodi."
+            return f"ನಾನು ಸ್ಥಳವನ್ನು {place} ಎಂದು ಕೇಳಿದೆ. ಇದು ಸರಿಯಾದ ಸ್ಥಳವೇ? ಇಲ್ಲದಿದ್ದರೆ ಸರಿಯಾದ ಪ್ರದೇಶ ಅಥವಾ ಮ್ಯಾಪ್ ಪಿನ್ ನೀಡಿ."
         return f"I heard the location as {place}. Is that correct? If not, please say the correct landmark or use the map pin."
 
     if session.required_slot == "started_at_or_time":

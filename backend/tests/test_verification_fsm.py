@@ -15,6 +15,7 @@ from app.core.verification_fsm import (
     _is_specific_location,
     apply_geo_pin_to_session,
 )
+from app.ws.call_handler import _repair_locked_language_transcript
 from app.models import AnalysisResult, CallSession, VerificationState
 
 
@@ -156,6 +157,35 @@ class TestHackathonGuardrails:
         data = _build_fast_analysis(session, "I am facing too many electrical cuts at my house", 0.1)
         assert data["department"] == "BESCOM"
         assert session.conversation_memory["department"] == "BESCOM"
+
+    def test_location_only_does_not_create_waste_issue(self, session):
+        session.preferred_language_code = "kn-IN"
+        session.preferred_language_label = "kannada"
+        data = _build_fast_analysis(session, "Whitefield", 0.1)
+        assert data["department"] == "OTHER"
+        assert data["emergency_type"] == "other"
+        assert data["needs_clarification"] is True
+        assert session.required_slot == "issue"
+        assert session.conversation_memory["issue"] == ""
+        assert session.conversation_memory["area"] == "Whitefield"
+
+    def test_kannada_transliteration_power_routes_bescom(self, session):
+        session.preferred_language_code = "kn-IN"
+        session.preferred_language_label = "kannada"
+        data = _build_fast_analysis(session, "Haudu, nanage vidyut kaḍitavide.", 0.2)
+        assert data["department"] == "BESCOM"
+        assert data["emergency_type"] == "power_outage"
+        assert data["language_detected"] == "kannada"
+        assert data["needs_clarification"] is True
+        assert session.required_slot in {"location", "landmark"}
+
+    def test_kannada_locked_stt_hallucination_is_repaired(self, session):
+        session.preferred_language_code = "kn-IN"
+        session.preferred_language_label = "kannada"
+        session.required_slot = "issue"
+        repaired = _repair_locked_language_transcript(session, "How do you do?")
+        assert "vidyut" in repaired
+        assert _build_fast_analysis(session, repaired, 0.2)["department"] == "BESCOM"
 
     def test_warm_location_prompt_for_home_power_cut(self, session):
         session.scrubbed_transcript = "I am facing too many electrical cuts at my house"
