@@ -95,11 +95,21 @@ export function useMicrophone({
   const silenceTimerRef = useRef(null);
   const speechActiveRef = useRef(false);
   const inputSampleRateRef = useRef(sampleRate);
+  const sampleRateRef = useRef(sampleRate);
   const inputBlockedRef = useRef(inputBlocked);
+  const callbacksRef = useRef({ onAudioFrame, onAudioEnd, onAudioChunk });
 
   useEffect(() => {
     inputBlockedRef.current = inputBlocked;
   }, [inputBlocked]);
+
+  useEffect(() => {
+    sampleRateRef.current = sampleRate;
+  }, [sampleRate]);
+
+  useEffect(() => {
+    callbacksRef.current = { onAudioFrame, onAudioEnd, onAudioChunk };
+  }, [onAudioFrame, onAudioEnd, onAudioChunk]);
 
   const updateLevel = useCallback(() => {
     if (!analyserRef.current) return;
@@ -111,7 +121,8 @@ export function useMicrophone({
   }, []);
 
   const emitWavFallback = useCallback(() => {
-    if (!onAudioChunk || !wavBufferRef.current.length) return;
+    const onAudioChunkRef = callbacksRef.current.onAudioChunk;
+    if (!onAudioChunkRef || !wavBufferRef.current.length) return;
     const totalLen = wavBufferRef.current.reduce((acc, curr) => acc + curr.length, 0);
     const merged = new Float32Array(totalLen);
     let offset = 0;
@@ -122,23 +133,23 @@ export function useMicrophone({
     wavBufferRef.current = [];
     if (rms(merged) < SILENCE_RMS_THRESHOLD) return;
 
-    const wavBlob = encodeWAV(merged, sampleRate);
+    const wavBlob = encodeWAV(merged, sampleRateRef.current);
     const reader = new FileReader();
     reader.onloadend = () => {
-      if (reader.result) onAudioChunk(reader.result.split(',')[1]);
+      if (reader.result) onAudioChunkRef(reader.result.split(',')[1]);
     };
     reader.readAsDataURL(wavBlob);
-  }, [onAudioChunk, sampleRate]);
+  }, []);
 
   const markSpeechEndSoon = useCallback(() => {
     if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
     silenceTimerRef.current = setTimeout(() => {
       if (speechActiveRef.current) {
         speechActiveRef.current = false;
-        onAudioEnd?.(sampleRate);
+        callbacksRef.current.onAudioEnd?.(sampleRateRef.current);
       }
     }, 650);
-  }, [onAudioEnd, sampleRate]);
+  }, []);
 
   const startRecording = useCallback(async () => {
     try {
@@ -155,7 +166,8 @@ export function useMicrophone({
 
       const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       audioCtxRef.current = audioCtx;
-      inputSampleRateRef.current = audioCtx.sampleRate || sampleRate;
+      const targetSampleRate = sampleRateRef.current;
+      inputSampleRateRef.current = audioCtx.sampleRate || targetSampleRate;
       const source = audioCtx.createMediaStreamSource(stream);
 
       const analyser = audioCtx.createAnalyser();
@@ -172,7 +184,7 @@ export function useMicrophone({
 
       processor.onaudioprocess = (e) => {
         const inputData = new Float32Array(e.inputBuffer.getChannelData(0));
-        const resampled = resampleFloat32(inputData, inputSampleRateRef.current, sampleRate);
+        const resampled = resampleFloat32(inputData, inputSampleRateRef.current, targetSampleRate);
         wavBufferRef.current.push(resampled);
         const level = rms(inputData);
 
@@ -189,7 +201,7 @@ export function useMicrophone({
 
         speechActiveRef.current = true;
         if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-        onAudioFrame?.(floatToPcm16Base64(resampled), sampleRate);
+        callbacksRef.current.onAudioFrame?.(floatToPcm16Base64(resampled), targetSampleRate);
       };
 
       source.connect(analyser);
@@ -197,7 +209,7 @@ export function useMicrophone({
       processor.connect(silentGain);
       silentGain.connect(audioCtx.destination);
 
-      if (onAudioChunk) {
+      if (callbacksRef.current.onAudioChunk) {
         intervalRef.current = setInterval(emitWavFallback, chunkIntervalMs);
       }
 
@@ -206,7 +218,7 @@ export function useMicrophone({
       setError(err.message);
       console.error('[Microphone] Failed to start:', err);
     }
-  }, [chunkIntervalMs, emitWavFallback, inputBlocked, markSpeechEndSoon, onAudioChunk, onAudioFrame, sampleRate, updateLevel]);
+  }, [chunkIntervalMs, emitWavFallback, markSpeechEndSoon, updateLevel]);
 
   const stopRecording = useCallback(() => {
     if (intervalRef.current) clearInterval(intervalRef.current);
@@ -216,15 +228,15 @@ export function useMicrophone({
     if (audioCtxRef.current) audioCtxRef.current.close();
     if (streamRef.current) streamRef.current.getTracks().forEach((track) => track.stop());
     if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
-    if (speechActiveRef.current) onAudioEnd?.(sampleRate);
+    if (speechActiveRef.current) callbacksRef.current.onAudioEnd?.(sampleRateRef.current);
     emitWavFallback();
 
     speechActiveRef.current = false;
     setIsRecording(false);
     setAudioLevel(0);
-  }, [emitWavFallback, onAudioEnd, sampleRate]);
+  }, [emitWavFallback]);
 
-  useEffect(() => () => stopRecording(), [stopRecording]);
+  useEffect(() => () => stopRecording(), []);
 
   return {
     isRecording,
