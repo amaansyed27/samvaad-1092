@@ -239,14 +239,20 @@ class ConnectionManager:
         now = time.perf_counter()
         if now - self._last_partial_at.get(call_id, 0.0) > 0.8:
             rms = audioop.rms(pcm_bytes, 2) / 32768 if pcm_bytes else 0.0
+            if msg.get("source") == "twilio":
+                distress_score = min(rms * 3.5, 0.65)
+                distress_level = "MODERATE" if distress_score >= 0.55 else "LOW"
+            else:
+                distress_score = min(rms * 12, 1.0)
+                distress_level = "MODERATE" if rms > 0.04 else "LOW"
             await self._broadcast(
                 call_id,
                 {
                     "event": "audio_processed",
                     "distress": {
-                        "score": min(rms * 12, 1.0),
-                        "level": "MODERATE" if rms > 0.04 else "LOW",
-                        "features": {"rms": min(rms * 12, 1.0)},
+                        "score": distress_score,
+                        "level": distress_level,
+                        "features": {"rms": rms, "source": msg.get("source") or "browser"},
                     },
                 },
             )

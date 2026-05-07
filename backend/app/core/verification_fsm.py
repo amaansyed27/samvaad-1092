@@ -608,7 +608,12 @@ class VerificationEngine:
             )
 
         is_required_clarification = session.required_slot in _REQUIRED_CLARIFICATION_SLOTS
-        if session.analysis_result.needs_clarification and is_required_clarification and session.clarification_count >= 2:
+        if (
+            session.analysis_result.needs_clarification
+            and is_required_clarification
+            and session.required_slot != "location_confirm"
+            and session.clarification_count >= 2
+        ):
             return self.force_takeover(
                 session,
                 "I may not be capturing this correctly. I am handing this to a human operator so you do not have to repeat yourself.",
@@ -937,7 +942,7 @@ def _update_conversation_memory(
         memory["currently_happening"] = "yes"
     if any(term in lower for term in ("every night", "daily", "again and again", "many times", "repeated", "too many")):
         memory["frequency"] = _extract_frequency(text)
-    if any(term in lower for term in ("since", "morning", "evening", "night", "yesterday", "today", "week", "month")) and session.required_slot in {"issue", "started_at_or_time", "frequency"}:
+    if any(term in lower for term in ("since", "morning", "evening", "night", "yesterday", "today", "week", "month")) and session.required_slot in {"issue", "started_at_or_time", "frequency", "location_confirm"}:
         memory["started_at_or_time"] = _extract_time_detail(text)
     if any(term in lower for term in ("tried", "checked", "called", "reported", "complained", "complaint")):
         memory["caller_tried"] = _extract_caller_tried(text)
@@ -1350,6 +1355,8 @@ def _build_fast_analysis(
         session.required_slot = "location_confirm"
         needs_clarification = True
         key_details.append(location_validation["reason"])
+        if memory.get("started_at_or_time"):
+            key_details.append(f"Timing captured: {memory['started_at_or_time']}")
     elif location_validation["status"] not in {"usable", "verified_format", "map_confirmed", "pin_verified"}:
         session.required_slot = "landmark"
         needs_clarification = True
