@@ -671,10 +671,10 @@ def _update_conversation_memory(
 
     location = _extract_location_hint(text)
     if location:
-        if _is_specific_location(location):
+        if _looks_like_location(location) and _is_specific_location(location):
             memory["landmark"] = location
             memory["area"] = _area_from_location(location) or _area_from_location(text) or memory.get("area", "")
-        elif location.lower().strip(" .,:;") not in {"my house", "my home", "home", "house"}:
+        elif _looks_like_location(location) and location.lower().strip(" .,:;") not in {"my house", "my home", "home", "house"}:
             memory["area"] = location
     else:
         location_phrase = _extract_standalone_location(text)
@@ -697,7 +697,7 @@ def _update_conversation_memory(
     if any(term in lower for term in ("since", "morning", "evening", "night", "yesterday", "today", "week", "month")):
         memory["started_at_or_time"] = _extract_time_detail(text)
     if any(term in lower for term in ("tried", "checked", "called", "reported", "complained", "complaint")):
-        memory["caller_tried"] = text
+        memory["caller_tried"] = _extract_caller_tried(text)
     authority = _extract_authority_contact(lower)
     if authority:
         memory["authority_contacted"] = authority
@@ -751,20 +751,31 @@ def _extract_standalone_location(text: str) -> str:
 
 def _extract_time_detail(text: str) -> str:
     lower = text.lower()
+    details: list[str] = []
     patterns = [
         r"since\s+[^,.]+",
+        r"for\s+the\s+past\s+[^,.]+",
+        r"past\s+[^,.]+",
+        r"\b\d+\s+(?:continuous\s+)?cuts?\s+in\s+\d+\s+days?\b",
+        r"each\s+cut\s+(?:has\s+)?lasted\s+[^,.]+",
         r"every\s+(?:morning|evening|night|day)",
         r"(?:morning|evening|night|yesterday|today|last\s+week|this\s+week)",
     ]
     for pattern in patterns:
-        match = re.search(pattern, lower)
-        if match:
-            return match.group(0).strip()
-    return text.strip(" .,:;")
+        for match in re.finditer(pattern, lower):
+            detail = match.group(0).strip(" .,:;")
+            if detail and detail not in details:
+                details.append(detail)
+    if details:
+        return "; ".join(details[:3])
+    return _trim_detail_text(text)
 
 
 def _extract_frequency(text: str) -> str:
     lower = text.lower()
+    match = re.search(r"\b\d+\s+(?:continuous\s+)?cuts?\s+in\s+\d+\s+days?\b", lower)
+    if match:
+        return match.group(0)
     if "every night" in lower:
         return "every night"
     if "daily" in lower:
@@ -773,12 +784,24 @@ def _extract_frequency(text: str) -> str:
         return "again and again"
     if "many times" in lower or "too many" in lower or "repeated" in lower:
         return "repeated"
-    return text.strip(" .,:;")
+    return _trim_detail_text(text)
+
+
+def _extract_caller_tried(text: str) -> str:
+    cleaned = " ".join(text.split()).strip(" .,:;")
+    match = re.search(
+        r"\b(?:we|i|they|he|she)?\s*(?:have\s+)?(?:already\s+)?(?:tried|called|contacted|reported|complained|made\s+this\s+complaint)\b.*",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    if match:
+        return _trim_detail_text(match.group(0))
+    return _trim_detail_text(cleaned)
 
 
 def _extract_authority_contact(lower: str) -> str:
     for authority in ("bescom", "bbmp", "bwssb", "police", "fire", "1092"):
-        if authority in lower and any(term in lower for term in ("called", "contacted", "reported", "complained")):
+        if authority in lower and any(term in lower for term in ("called", "contacted", "contacting", "tried", "reported", "complained")):
             return authority.upper()
     if "authority" in lower or "office" in lower or "helpline" in lower:
         return "authority contacted"
@@ -1025,26 +1048,91 @@ def _extract_location_hint(transcript: str) -> str:
     text = " ".join(transcript.split())
     lower = text.lower()
     best_index = -1
-    best_marker = ""
+    best_candidate = ""
     for marker in (" location is ", " in ", " at ", " near ", " from "):
-        index = lower.rfind(marker)
-        if index > best_index:
-            best_index = index
-            best_marker = marker
-    if best_index >= 0:
-        return _clean_location_hint(text[best_index + len(best_marker):])
+        for match in re.finditer(re.escape(marker), lower):
+            candidate = _clean_location_hint(text[match.end():])
+            if not candidate or _is_non_location_phrase(candidate):
+                continue
+            if _looks_like_location(candidate) and match.start() > best_index:
+                best_index = match.start()
+                best_candidate = candidate
+    if best_candidate:
+        return best_candidate
     return ""
 
 
 def _clean_location_hint(location: str) -> str:
     cleaned = location.strip(" .,:;")
     cleaned = re.split(
-        r"\b(?:i need help|please help|that is all|thank you|thanks|can you help|just create ticket|create ticket|log ticket|raise ticket|go ahead|proceed)\b",
+        r"\b(?:i need help|please help|that is all|thank you|thanks|can you help|just create ticket|create ticket|log ticket|raise ticket|go ahead|proceed|it has|it is|this has|we have|we faced|we are facing|has been happening|have faced|for the past|past week|past month|since yesterday|since today)\b",
         cleaned,
         maxsplit=1,
         flags=re.IGNORECASE,
     )[0].strip(" .,:;")
     return cleaned
+
+
+def _looks_like_location(location: str | None) -> bool:
+    if not location:
+        return False
+    lower = location.lower().strip(" .,:;")
+    if lower in {"my house", "my home", "home", "house", "my place"}:
+        return True
+    if _is_non_location_phrase(lower):
+        return False
+    if any(term in lower for term in _BROAD_LOCATION_TERMS):
+        return True
+    if any(marker in lower for marker in _SPECIFIC_LOCATION_MARKERS):
+        return True
+    if any(char.isdigit() for char in lower) and not re.fullmatch(r"[\d\s,.;:-]+", lower):
+        return True
+    words = [word.strip(".,:;") for word in lower.split() if word.strip(".,:;")]
+    return 1 <= len(words) <= 5 and any(word[:1].isupper() for word in location.split())
+
+
+def _is_non_location_phrase(text: str | None) -> bool:
+    if not text:
+        return True
+    lower = text.lower().strip(" .,:;")
+    if not lower:
+        return True
+    time_terms = (
+        "days",
+        "hours",
+        "week",
+        "month",
+        "morning",
+        "evening",
+        "night",
+        "yesterday",
+        "today",
+        "continuous cuts",
+        "each cut",
+        "lasted",
+        "happening",
+    )
+    complaint_terms = (
+        "tried contacting",
+        "contacting bescom",
+        "unhelpful",
+        "rude",
+        "complaint before",
+        "reported",
+        "called",
+    )
+    if any(term in lower for term in time_terms) and not any(marker in lower for marker in _SPECIFIC_LOCATION_MARKERS):
+        return True
+    if any(term in lower for term in complaint_terms):
+        return True
+    return False
+
+
+def _trim_detail_text(text: str) -> str:
+    cleaned = " ".join((text or "").split()).strip(" .,:;")
+    if len(cleaned) <= 180:
+        return cleaned
+    return cleaned[:177].rstrip(" ,.;:") + "..."
 
 
 def _detect_text_language(transcript: str) -> str:
@@ -1062,7 +1150,7 @@ def _sentiment_from_text(transcript: str, acoustic_score: float) -> str:
         return "fear"
     if any(term in text for term in ("urgent", "immediately", "emergency", "right now", "bahut zaroori")):
         return "urgent"
-    if any(term in text for term in ("angry", "fed up", "ridiculous", "again and again", "many times")):
+    if any(term in text for term in ("angry", "fed up", "ridiculous", "again and again", "many times", "extremely unhelpful", "rude")):
         return "angry"
     if any(term in text for term in ("confused", "don't know", "not sure", "which", "where")):
         return "confused"
@@ -1298,10 +1386,10 @@ def _build_dispatch_message(session: CallSession) -> str:
     department = (analysis.department if analysis else None) or session.department_assigned or "the concerned department"
 
     if language == "hindi":
-        return f"आपका टिकट {session.ticket_id} {department} के साथ दर्ज हो गया है. स्थिति जानने के लिए 1092 पर यही नंबर बताएं. धन्यवाद."
+        return f"आपका टिकट {session.ticket_id} {department} के साथ दर्ज हो गया है. हम आगे की कार्रवाई के लिए इसे भेज रहे हैं. जरूरत पड़ी तो प्रतिनिधि इसी नंबर पर संपर्क करेगा. स्थिति जानने के लिए 1092 पर यही नंबर बताएं. धन्यवाद."
     if language == "kannada":
-        return f"ನಿಮ್ಮ ಟಿಕೆಟ್ {session.ticket_id} {department} ಗೆ ದಾಖಲಾಗಿದೆ. ಸ್ಥಿತಿ ತಿಳಿಯಲು 1092 ಗೆ ಕರೆ ಮಾಡಿ ಈ ಸಂಖ್ಯೆಯನ್ನು ಹೇಳಿ. ಧನ್ಯವಾದಗಳು."
-    return f"Your ticket {session.ticket_id} has been logged with {department}. Check status by calling 1092 and quoting this number. Thank you for calling."
+        return f"ನಿಮ್ಮ ಟಿಕೆಟ್ {session.ticket_id} {department} ಗೆ ದಾಖಲಾಗಿದೆ. ಮುಂದಿನ ಕ್ರಮಕ್ಕೆ ಕಳುಹಿಸುತ್ತಿದ್ದೇವೆ. ಹೆಚ್ಚಿನ ವಿವರ ಬೇಕಾದರೆ ಪ್ರತಿನಿಧಿ ಇದೇ ಸಂಖ್ಯೆಗೆ ಸಂಪರ್ಕಿಸುತ್ತಾರೆ. ಸ್ಥಿತಿ ತಿಳಿಯಲು 1092 ಗೆ ಕರೆ ಮಾಡಿ ಈ ಸಂಖ್ಯೆಯನ್ನು ಹೇಳಿ. ಧನ್ಯವಾದಗಳು."
+    return f"Your ticket {session.ticket_id} has been logged with {department}. We will send it for action, and if more details are needed, a representative will contact you on this same number. You can check status by calling 1092 and quoting this ticket ID. The ticket details have also been sent by SMS. Thank you for calling Karnataka 1092."
 
 
 def _safe_json_parse(text: str) -> dict[str, Any]:

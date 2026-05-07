@@ -136,6 +136,8 @@ class TestHackathonGuardrails:
         message = _build_dispatch_message(session)
         assert session.ticket_id in message
         assert "1092" in message
+        assert "representative will contact you on this same number" in message
+        assert "sent by SMS" in message
         assert "Thank you" in message
 
     def test_power_issue_deterministic_department_overrides_bad_ml_route(self, session):
@@ -186,6 +188,45 @@ class TestHackathonGuardrails:
         _build_fast_analysis(session, "I called BESCOM before, ticket 123", 0.2)
         assert session.conversation_memory["authority_contacted"] == "BESCOM"
         assert "ticket 123" in session.conversation_memory["previous_complaint"].lower()
+
+    def test_time_details_do_not_overwrite_location(self, session):
+        text = (
+            "I am facing too many electrical cuts at my house. "
+            "45, fifth cross near Espelad Apartments, Indiranagar. "
+            "It has been happening for the past week and we have faced "
+            "7 continuous cuts in 3 days and each cut has lasted over 3 hours."
+        )
+        data = _build_fast_analysis(session, text, 0.2)
+        memory = session.conversation_memory
+
+        assert data["department"] == "BESCOM"
+        assert memory["area"] == "Indiranagar"
+        assert "Espelad Apartments" in memory["landmark"]
+        assert "3 days" not in memory["landmark"]
+        assert "past week" in memory["started_at_or_time"]
+        assert "7 continuous cuts in 3 days" in memory["frequency"]
+        assert memory["ticket_ready"] is True
+
+    def test_attempt_details_do_not_overwrite_location(self, session):
+        session.conversation_memory = {
+            "issue": "power_outage",
+            "department": "BESCOM",
+            "area": "Indiranagar",
+            "landmark": "45, fifth cross near Espelad Apartments, Indiranagar",
+            "ticket_ready": True,
+        }
+        session.department_assigned = "BESCOM"
+        _build_fast_analysis(
+            session,
+            "We have tried contacting BESCOM, but they have been extremely unhelpful and very rude with us.",
+            0.2,
+        )
+        memory = session.conversation_memory
+        assert memory["area"] == "Indiranagar"
+        assert "Espelad Apartments" in memory["landmark"]
+        assert memory["authority_contacted"] == "BESCOM"
+        assert memory["sentiment"] == "angry"
+        assert memory["caller_tried"].startswith("We have tried contacting BESCOM")
 
     def test_hindi_language_lock_uses_hindi_prompts(self, engine, session):
         engine.set_language(session, "hi-IN")

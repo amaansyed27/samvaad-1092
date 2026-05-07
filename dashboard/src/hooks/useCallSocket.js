@@ -37,6 +37,7 @@ export function useCallSocket(url = DEFAULT_WS_URL) {
   const audioCtxRef = useRef(null);
   const nextAudioTimeRef = useRef(0);
   const activeSourcesRef = useRef([]);
+  const seenEventKeysRef = useRef(new Map());
 
   const stopPlayback = useCallback(() => {
     activeSourcesRef.current.forEach((source) => {
@@ -48,6 +49,18 @@ export function useCallSocket(url = DEFAULT_WS_URL) {
   }, []);
 
   const handleEvent = useCallback((data) => {
+    const eventKey = buildEventKey(data);
+    const now = Date.now();
+    const previousSeen = seenEventKeysRef.current.get(eventKey);
+    if (previousSeen && now - previousSeen < 2000) return;
+    seenEventKeysRef.current.set(eventKey, now);
+    if (seenEventKeysRef.current.size > 400) {
+      const cutoff = now - 10000;
+      for (const [key, seenAt] of seenEventKeysRef.current.entries()) {
+        if (seenAt < cutoff) seenEventKeysRef.current.delete(key);
+      }
+    }
+
     setEvents((prev) => [...prev.slice(-99), data]);
 
     if (data.call_id) {
@@ -361,6 +374,17 @@ function playAssistantChunk(data, audioCtxRef, nextAudioTimeRef, activeSourcesRe
     if (activeSourcesRef.current.length === 0) onEnded?.();
   };
   source.start(startAt);
+}
+
+function buildEventKey(data) {
+  const event = data.event || '';
+  const callId = data.call_id || '';
+  const timestamp = data.timestamp || '';
+  const text = data.transcript || data.prompt || data.text || data.restatement || data.dispatch_message || '';
+  const turn = data.turn ? `${data.turn.role || ''}:${data.turn.text || ''}:${data.turn.timestamp || ''}` : '';
+  const audio = data.audio ? `${data.codec || ''}:${data.sample_rate || ''}:${data.audio.length}:${data.audio.slice(0, 48)}` : '';
+  const status = data.status || data.state || '';
+  return [callId, event, timestamp, status, text, turn, audio].join('|');
 }
 
 function getAudioContext(audioCtxRef, sampleRate) {
