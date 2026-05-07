@@ -832,9 +832,6 @@ class ConnectionManager:
         if existing and not existing.done():
             existing.cancel()
             await self._broadcast(call_id, {"event": "playback_cancel"})
-        if self.has_twilio_connection(call_id):
-            self._hold_twilio_input(call_id, 2.8)
-
         async def run() -> None:
             tts_start = time.perf_counter()
             first_audio_sent = False
@@ -847,40 +844,23 @@ class ConnectionManager:
                             self._tts.synthesise(
                                 spoken_text,
                                 target_language=lang,
-                                output_audio_codec="mulaw",
-                                speech_sample_rate=8000,
+                                output_audio_codec="wav",
+                                speech_sample_rate=24000,
                             ),
-                            timeout=3.2,
+                            timeout=9.0,
                         )
                     except asyncio.TimeoutError:
                         await self._broadcast(call_id, {
                             "event": "tts_status",
                             "status": "twilio_tts_timeout",
-                            "timeout_ms": 3200,
+                            "timeout_ms": 9000,
                         })
                         return
                     if not chunk.get("audio_base64"):
                         await self._broadcast(call_id, {
                             "event": "tts_status",
-                            "status": "twilio_mulaw_empty_retry_wav",
+                            "status": "twilio_wav_empty",
                         })
-                        try:
-                            chunk = await asyncio.wait_for(
-                                self._tts.synthesise(
-                                    spoken_text,
-                                    target_language=lang,
-                                    output_audio_codec="wav",
-                                    speech_sample_rate=24000,
-                                ),
-                                timeout=2.8,
-                            )
-                        except asyncio.TimeoutError:
-                            await self._broadcast(call_id, {
-                                "event": "tts_status",
-                                "status": "twilio_tts_retry_timeout",
-                                "timeout_ms": 2800,
-                            })
-                            return
                     if chunk.get("audio_base64"):
                         first_audio_ms = (time.perf_counter() - tts_start) * 1000
                         session.latency_marks["tts_first_audio_ms"] = first_audio_ms
