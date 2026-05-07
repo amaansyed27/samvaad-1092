@@ -369,6 +369,7 @@ class SarvamTTS:
         normalized = _normalize_tts_text(text)
 
         url = "wss://api.sarvam.ai/text-to-speech/ws?model=bulbul:v3&send_completion_event=true"
+        first_audio_seen = False
         try:
             async with websockets.connect(
                 url,
@@ -393,7 +394,9 @@ class SarvamTTS:
                 await ws.send(json.dumps({"type": "text", "data": {"text": normalized}}))
                 await ws.send(json.dumps({"type": "flush"}))
 
-                async for raw in ws:
+                while True:
+                    timeout = 4.0 if not first_audio_seen else 8.0
+                    raw = await asyncio.wait_for(ws.recv(), timeout=timeout)
                     if isinstance(raw, bytes):
                         raw = raw.decode("utf-8", errors="ignore")
                     try:
@@ -405,6 +408,7 @@ class SarvamTTS:
                         data = message.get("data") or {}
                         audio = data.get("audio") or data.get("chunk") or ""
                         if audio:
+                            first_audio_seen = True
                             yield {
                                 "audio_base64": audio,
                                 "content_type": data.get("content_type") or _codec_content_type(codec),
@@ -418,6 +422,9 @@ class SarvamTTS:
                     elif message.get("type") == "error":
                         raise RuntimeError(str(message))
         except Exception as exc:
+            if first_audio_seen:
+                logger.warning("Sarvam streaming TTS ended after partial audio: %s", exc)
+                return
             logger.warning("Sarvam streaming TTS failed, falling back to REST: %s", exc)
             fallback = await self.synthesise(
                 normalized,

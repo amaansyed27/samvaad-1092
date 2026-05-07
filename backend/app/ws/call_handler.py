@@ -785,7 +785,6 @@ class ConnectionManager:
 
         await self._broadcast(call_id, {"event": "assistant_text", "text": text})
         self._assistant_started_at[call_id] = time.perf_counter()
-        self._hold_twilio_input(call_id, 0.9)
         self._append_conversation_turn(session, "assistant", text, language_code=_tts_language(session))
         await self._broadcast(call_id, {
             "event": "conversation_turn",
