@@ -107,6 +107,10 @@ class TestHackathonGuardrails:
         ("text", "expected"),
         [
             ("yes correct", True),
+            ("Okay.", True),
+            ("Go ahead.", True),
+            ("that's fine", True),
+            ("that's right", True),
             ("haan sahi hai", True),
             ("haudu sari", True),
             ("हाँ सही है", True),
@@ -123,6 +127,8 @@ class TestHackathonGuardrails:
 
     def test_confirmation_ignores_filler_with_extra_details(self):
         assert _detect_confirmation_intent("ok my location is Whitefield") is None
+        assert _detect_confirmation_intent("Okay, but location is Whitefield") is None
+        assert _detect_confirmation_intent("Street lights are actually there.") is None
         assert _detect_confirmation_intent("no the location is near Vydehi hospital") is None
 
     def test_vague_issue_requires_clarification_not_ticket_closure(self, session):

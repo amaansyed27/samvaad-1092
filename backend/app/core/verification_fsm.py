@@ -216,12 +216,20 @@ _FAKE_LOCATION_CUES = {
 
 _YES_TOKENS = {
     "yes",
+    "ok",
+    "okay",
+    "fine",
     "correct",
     "right",
     "true",
     "proceed",
     "confirm",
     "confirmed",
+    "go ahead",
+    "that's fine",
+    "thats fine",
+    "that's right",
+    "thats right",
     "haan",
     "hoga",
     "sahi",
@@ -495,6 +503,17 @@ class VerificationEngine:
 
             if _is_confirmation_clarification_question(transcript):
                 message = _build_confirmation_explanation(session)
+                session.restated_summary = message
+                return {
+                    "event": "clarification_required",
+                    "state": session.state,
+                    "prompt": message,
+                    "assistant_message": message,
+                    "slots": _build_slot_view(session),
+                }
+
+            if _should_ask_confirmation_repair(transcript):
+                message = _confirmation_repair_prompt(session)
                 session.restated_summary = message
                 return {
                     "event": "clarification_required",
@@ -2624,6 +2643,24 @@ def _detect_confirmation_intent(text: str) -> bool | None:
     if has_yes and not has_detail:
         return True
     return None
+
+
+def _confirmation_repair_prompt(session: CallSession) -> str:
+    language = _preferred_language(session)
+    if language == "hindi":
+        return "Kripya sirf yes ya no batayein. Agar kuch badalna hai, sahi detail bata dijiye."
+    if language == "kannada":
+        return "Dayavittu yes athava no heli. Badalavane iddare sariyada vivara heli."
+    return "Please say yes or no. If any detail is wrong, tell me the corrected detail."
+
+
+def _should_ask_confirmation_repair(text: str) -> bool:
+    lower = " ".join((text or "").lower().strip(" .,!?:;").split())
+    if not lower:
+        return False
+    words = lower.split()
+    has_correction = any(_contains_token(lower, cue) for cue in _CORRECTION_CUES)
+    return len(words) <= 4 and not has_correction and not _looks_like_new_grievance(lower)
 
 
 def _is_affirmative_location_confirmation(text: str) -> bool:

@@ -423,6 +423,16 @@ class ConnectionManager:
                 "language_code": language_code,
                 "stt_language_code": original_language_code,
             })
+        if self.has_twilio_connection(call_id) and _is_twilio_noise_transcript(session, transcript):
+            await self._broadcast(call_id, {
+                "event": "stt_status",
+                "status": "twilio_noise_transcript_ignored",
+                "transcript": transcript,
+                "state": session.state,
+                "required_slot": session.required_slot,
+            })
+            self._turn_started_at.pop(call_id, None)
+            return
         session.latency_marks["stt_final_ms"] = _elapsed_ms(self._turn_started_at.get(call_id)) or 0.0
         ml_route = predict_department(transcript)
         if _should_accept_ml_route(session, ml_route.get("department")):
@@ -532,7 +542,9 @@ class ConnectionManager:
         
         # 1. Known STT hallucination artifacts on silence/noise
         lower_t = transcript.lower()
-        known_hallucinations = ["j j.", "okay, fine.", "hello.", "hello", "test.", "test", "yes.", "no."]
+        known_hallucinations = ["j j.", "okay, fine.", "hello.", "hello", "test.", "test"]
+        if session.required_slot != "confirmation":
+            known_hallucinations.extend(["yes.", "yes", "no.", "no"])
         if lower_t in known_hallucinations and prob < 0.75:
             logger.info("Filtered STT hallucination: '%s' (prob: %.3f)", transcript, prob)
             return
@@ -820,6 +832,8 @@ class ConnectionManager:
         if existing and not existing.done():
             existing.cancel()
             await self._broadcast(call_id, {"event": "playback_cancel"})
+        if self.has_twilio_connection(call_id):
+            self._hold_twilio_input(call_id, 1.2)
 
         async def run() -> None:
             tts_start = time.perf_counter()
@@ -1105,6 +1119,32 @@ def _estimate_audio_seconds(audio_b64: str, codec: str, sample_rate: int) -> flo
         return len(raw) / float(2 * (sample_rate or 24000))
     except Exception:
         return 0.0
+
+
+def _is_twilio_noise_transcript(session: CallSession, transcript: str) -> bool:
+    lower = re.sub(r"[^a-z0-9]+", " ", (transcript or "").lower()).strip()
+    lower = " ".join(lower.split())
+    if not lower:
+        return True
+    filler = {
+        "uh",
+        "um",
+        "hmm",
+        "hm",
+        "that uh",
+        "that um",
+        "that",
+        "uh huh",
+        "mm",
+    }
+    if lower in filler:
+        return True
+    if session.required_slot != "confirmation" and lower in {"ok", "okay", "okay fine", "fine"}:
+        return True
+    words = lower.split()
+    if len(words) <= 2 and all(word in {"uh", "um", "hmm", "hm", "ah", "oh", "that"} for word in words):
+        return True
+    return False
 
 
 def _twilio_spoken_text(text: str) -> str:

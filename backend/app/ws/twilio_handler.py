@@ -19,6 +19,45 @@ from app.ws.call_handler import get_manager
 
 logger = logging.getLogger("samvaad.twilio_handler")
 
+
+TWILIO_SPEECH_START_RMS = 180
+TWILIO_SPEECH_CONTINUE_RMS = 75
+TWILIO_SPEECH_START_CHUNKS = 5
+TWILIO_BARGE_IN_RMS = 1800
+TWILIO_BARGE_IN_CHUNKS = 6
+TWILIO_SILENCE_END_CHUNKS = 45
+TWILIO_MAX_SPEECH_CHUNKS = 260
+TWILIO_PREROLL_FRAMES = 8
+
+
+def _twilio_vad_decision(
+    *,
+    rms: int,
+    speech_active: bool,
+    candidate_chunks: int,
+    input_blocked: bool,
+    blocked_chunks: int,
+) -> tuple[bool, int, int, bool]:
+    """Return speech decision, candidate count, blocked count, and barge-in flag."""
+    if input_blocked:
+        if rms >= TWILIO_BARGE_IN_RMS:
+            blocked_chunks += 1
+        else:
+            blocked_chunks = max(0, blocked_chunks - 1)
+        barge_in = blocked_chunks >= TWILIO_BARGE_IN_CHUNKS
+        return barge_in, candidate_chunks if barge_in else 0, blocked_chunks, barge_in
+
+    blocked_chunks = 0
+    if speech_active:
+        return rms > TWILIO_SPEECH_CONTINUE_RMS, candidate_chunks, blocked_chunks, False
+
+    if rms > TWILIO_SPEECH_START_RMS:
+        candidate_chunks += 1
+    else:
+        candidate_chunks = max(0, candidate_chunks - 1)
+    return candidate_chunks >= TWILIO_SPEECH_START_CHUNKS, candidate_chunks, blocked_chunks, False
+
+
 class TwilioMediaStreamHandler:
     def __init__(self, ws: WebSocket):
         self.ws = ws
@@ -30,6 +69,7 @@ class TwilioMediaStreamHandler:
         self._silence_chunks = 0
         self._speech_chunks = 0
         self._candidate_chunks = 0
+        self._blocked_speech_chunks = 0
         self._ratecv_state = None
         self._pre_roll_frames: list[bytes] = []
         self._last_blocked_notice_at = 0.0
@@ -110,14 +150,17 @@ class TwilioMediaStreamHandler:
                     # Calculate RMS energy for VAD (Silence Gating)
                     rms = audioop.rms(pcm_16k, 2)
                     self._pre_roll_frames.append(pcm_16k)
-                    self._pre_roll_frames = self._pre_roll_frames[-5:]
+                    self._pre_roll_frames = self._pre_roll_frames[-TWILIO_PREROLL_FRAMES:]
+                    input_blocked = bool(self.call_id and self.manager.is_twilio_input_blocked(self.call_id))
+                    is_speech, self._candidate_chunks, self._blocked_speech_chunks, barge_in = _twilio_vad_decision(
+                        rms=rms,
+                        speech_active=self._speech_active,
+                        candidate_chunks=self._candidate_chunks,
+                        input_blocked=input_blocked,
+                        blocked_chunks=self._blocked_speech_chunks,
+                    )
 
-                    if self.call_id and self.manager.is_twilio_input_blocked(self.call_id):
-                        self._speech_active = False
-                        self._silence_chunks = 0
-                        self._speech_chunks = 0
-                        self._candidate_chunks = 0
-                        self._pre_roll_frames.clear()
+                    if input_blocked and not barge_in:
                         now = time.perf_counter()
                         if now - self._last_blocked_notice_at > 1.0:
                             self._last_blocked_notice_at = now
@@ -130,22 +173,11 @@ class TwilioMediaStreamHandler:
                             })
                         continue
 
-                    start_threshold = 80
-                    continue_threshold = 45
-                    if self._speech_active:
-                        is_speech = rms > continue_threshold
-                    else:
-                        if rms > start_threshold:
-                            self._candidate_chunks += 1
-                        else:
-                            self._candidate_chunks = max(0, self._candidate_chunks - 1)
-                        is_speech = self._candidate_chunks >= 3
-
                     if is_speech and not self._speech_active:
                         await self.manager._broadcast(self.call_id, {
                             "event": "audio_activity",
                             "source": "twilio",
-                            "status": "speech_started",
+                            "status": "barge_in_started" if barge_in else "speech_started",
                             "rms": rms,
                         })
                         for frame in self._pre_roll_frames[:-1]:
@@ -157,7 +189,7 @@ class TwilioMediaStreamHandler:
                                     "data": base64.b64encode(frame).decode("utf-8"),
                                     "sample_rate": 16000,
                                     "source": "twilio",
-                                    "barge_in": False,
+                                    "barge_in": barge_in,
                                 }),
                             )
 
@@ -168,7 +200,7 @@ class TwilioMediaStreamHandler:
                             "sample_rate": 16000,
                             "source": "twilio",
                             "rms": rms,
-                            "barge_in": False,
+                            "barge_in": barge_in,
                         }
                         await self.manager.handle_message(self.ws, self.session, json.dumps(msg))
 
@@ -178,7 +210,7 @@ class TwilioMediaStreamHandler:
                         self._speech_chunks += 1
 
                         # Demo latency guard: don't wait for a long natural pause on PSTN.
-                        if self._speech_chunks >= 190:
+                        if self._speech_chunks >= TWILIO_MAX_SPEECH_CHUNKS:
                             await self.manager.handle_message(
                                 self.ws,
                                 self.session,
@@ -194,9 +226,10 @@ class TwilioMediaStreamHandler:
                             self._silence_chunks = 0
                             self._speech_chunks = 0
                             self._candidate_chunks = 0
+                            self._blocked_speech_chunks = 0
                     elif self._speech_active:
                         self._silence_chunks += 1
-                        if self._silence_chunks >= 14:
+                        if self._silence_chunks >= TWILIO_SILENCE_END_CHUNKS:
                             await self.manager.handle_message(
                                 self.ws,
                                 self.session,
@@ -212,6 +245,7 @@ class TwilioMediaStreamHandler:
                             self._silence_chunks = 0
                             self._speech_chunks = 0
                             self._candidate_chunks = 0
+                            self._blocked_speech_chunks = 0
                     
                 elif event == "stop":
                     if self.session and self._speech_active:
