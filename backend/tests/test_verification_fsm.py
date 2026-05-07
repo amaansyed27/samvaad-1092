@@ -247,6 +247,21 @@ class TestHackathonGuardrails:
         assert session.required_slot == "abuse_warning"
         assert "prank" in data["abuse_reason"]
 
+    def test_takeover_event_includes_spoken_handoff(self, engine, session):
+        event = engine.force_takeover(session, "High urgency or distress detected")
+        assert event["event"] == "SAFE_HUMAN_TAKEOVER"
+        assert "human operator" in event["assistant_message"]
+        assert "stay on the line" in event["assistant_message"].lower()
+
+    def test_high_distress_safety_issue_requires_takeover(self, session):
+        data = _build_fast_analysis(
+            session,
+            "There is sparking from an electric wire down near the school and it is unsafe",
+            0.8,
+        )
+        assert data["priority"] == "HIGH"
+        assert data["requires_immediate_takeover"] is True
+
     def test_hindi_language_lock_uses_hindi_prompts(self, engine, session):
         engine.set_language(session, "hi-IN")
         session.conversation_memory = {

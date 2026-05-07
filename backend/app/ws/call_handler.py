@@ -625,6 +625,9 @@ class ConnectionManager:
         session.latency_marks["analysis_ms"] = _elapsed_ms(self._turn_started_at.get(call_id)) or 0.0
 
         if session.state == VerificationState.HUMAN_TAKEOVER.value:
+            if event.get("assistant_message"):
+                await self._stream_assistant_text(call_id, session, event["assistant_message"])
+            await self._persist_session(session)
             return
 
         # If we're still on track (not taken over), generate restatement
@@ -669,6 +672,8 @@ class ConnectionManager:
         reason = msg.get("reason", "Agent initiated manual takeover")
         event = self._engine.force_takeover(session, reason)
         await self._broadcast(call_id, event)
+        if event.get("assistant_message"):
+            await self._stream_assistant_text(call_id, session, event["assistant_message"])
         await self._persist_session(session)
 
     async def _handle_agent_edit(

@@ -361,6 +361,7 @@ class VerificationEngine:
         return {
             "event": "SAFE_HUMAN_TAKEOVER",
             "reason": reason,
+            "assistant_message": _build_human_takeover_message(session, reason),
             "distress_score": session.distress_score,
         }
 
@@ -1225,7 +1226,12 @@ def _score_priority(
         "semantic_distress": score,
         "severity": severity,
         "priority": priority,
-        "requires_takeover": score >= 0.92 or sentiment == "fear",
+        "requires_takeover": (
+            score >= 0.9
+            or sentiment == "fear"
+            or (priority == "HIGH" and acoustic_score >= 0.75)
+            or (priority == "HIGH" and any(term in text for term in ("danger", "unsafe", "sparking", "fire", "shock", "wire down")))
+        ),
         "reason": "; ".join(reasons) or "Routine civic intake based on current details.",
     }
 
@@ -1596,6 +1602,23 @@ def _build_dispatch_message(session: CallSession) -> str:
     if language == "kannada":
         return f"ನಿಮ್ಮ ಟಿಕೆಟ್ {session.ticket_id} {department} ಗೆ ದಾಖಲಾಗಿದೆ. ಮುಂದಿನ ಕ್ರಮಕ್ಕೆ ಕಳುಹಿಸುತ್ತಿದ್ದೇವೆ. ಹೆಚ್ಚಿನ ವಿವರ ಬೇಕಾದರೆ ಪ್ರತಿನಿಧಿ ಇದೇ ಸಂಖ್ಯೆಗೆ ಸಂಪರ್ಕಿಸುತ್ತಾರೆ. ಸ್ಥಿತಿ ತಿಳಿಯಲು 1092 ಗೆ ಕರೆ ಮಾಡಿ ಈ ಸಂಖ್ಯೆಯನ್ನು ಹೇಳಿ. ಧನ್ಯವಾದಗಳು."
     return f"Your ticket {session.ticket_id} has been logged with {department}. We will send it for action, and if more details are needed, a representative will contact you on this same number. You can check status by calling 1092 and quoting this ticket ID. The ticket details have also been sent by SMS. Thank you for calling Karnataka 1092."
+
+
+def _build_human_takeover_message(session: CallSession, reason: str) -> str:
+    language = _preferred_language(session)
+    reason_lower = (reason or "").lower()
+    if "not be capturing" in reason_lower or "repeat yourself" in reason_lower:
+        if language == "hindi":
+            return "Main shayad aapki baat sahi tarah capture nahi kar pa rahi hoon. Main ab aapko human operator se connect kar rahi hoon, taaki aapko baar baar repeat na karna pade. Kripya line par rahiye."
+        if language == "kannada":
+            return "Nimma maatannu sariyagi capture madalaguttilla. Nimge matte matte helabekagadiralu, nanu iga human operator ge connect maduttiddene. Dayavittu line nalli iri."
+        return "I may not be capturing this correctly. I am connecting you to a human operator now, so you do not have to repeat yourself. Please stay on the line."
+
+    if language == "hindi":
+        return "Main samajh rahi hoon ki yeh urgent ho sakta hai. Main aapko ab human operator se connect kar rahi hoon. Kripya line par rahiye."
+    if language == "kannada":
+        return "Idhu urgent agirabahudu endu arthavagide. Nanu iga nimmanu human operator ge connect maduttiddene. Dayavittu line nalli iri."
+    return "I understand this may need immediate attention. I am connecting you to a human operator now. Please stay on the line."
 
 
 def _safe_json_parse(text: str) -> dict[str, Any]:

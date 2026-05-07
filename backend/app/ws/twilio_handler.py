@@ -130,8 +130,8 @@ class TwilioMediaStreamHandler:
                             })
                         continue
 
-                    start_threshold = 110
-                    continue_threshold = 65
+                    start_threshold = 80
+                    continue_threshold = 45
                     if self._speech_active:
                         is_speech = rms > continue_threshold
                     else:

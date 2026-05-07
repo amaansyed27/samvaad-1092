@@ -69,8 +69,10 @@ function rms(samples) {
   return Math.sqrt(sum / Math.max(samples.length, 1));
 }
 
-const SPEECH_RMS_THRESHOLD = 0.0025;
-const SILENCE_RMS_THRESHOLD = 0.0018;
+const SPEECH_RMS_THRESHOLD = 0.0012;
+const SILENCE_RMS_THRESHOLD = 0.0007;
+const SPEECH_START_FRAMES = 2;
+const PRE_ROLL_FRAMES = 8;
 
 export function useMicrophone({
   onAudioFrame,
@@ -94,6 +96,8 @@ export function useMicrophone({
   const intervalRef = useRef(null);
   const silenceTimerRef = useRef(null);
   const speechActiveRef = useRef(false);
+  const speechCandidateFramesRef = useRef(0);
+  const preRollRef = useRef([]);
   const inputSampleRateRef = useRef(sampleRate);
   const sampleRateRef = useRef(sampleRate);
   const inputBlockedRef = useRef(inputBlocked);
@@ -146,9 +150,11 @@ export function useMicrophone({
     silenceTimerRef.current = setTimeout(() => {
       if (speechActiveRef.current) {
         speechActiveRef.current = false;
+        speechCandidateFramesRef.current = 0;
+        preRollRef.current = [];
         callbacksRef.current.onAudioEnd?.(sampleRateRef.current);
       }
-    }, 650);
+    }, 900);
   }, []);
 
   const startRecording = useCallback(async () => {
@@ -181,15 +187,21 @@ export function useMicrophone({
       silentGain.gain.value = 0;
       silentGainRef.current = silentGain;
       wavBufferRef.current = [];
+      preRollRef.current = [];
+      speechCandidateFramesRef.current = 0;
 
       processor.onaudioprocess = (e) => {
         const inputData = new Float32Array(e.inputBuffer.getChannelData(0));
         const resampled = resampleFloat32(inputData, inputSampleRateRef.current, targetSampleRate);
         wavBufferRef.current.push(resampled);
+        preRollRef.current.push(resampled);
+        preRollRef.current = preRollRef.current.slice(-PRE_ROLL_FRAMES);
         const level = rms(inputData);
 
         if (inputBlockedRef.current) {
           speechActiveRef.current = false;
+          speechCandidateFramesRef.current = 0;
+          preRollRef.current = [];
           if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
           return;
         }
@@ -197,6 +209,17 @@ export function useMicrophone({
         if (level < SPEECH_RMS_THRESHOLD) {
           markSpeechEndSoon();
           return;
+        }
+
+        if (!speechActiveRef.current) {
+          speechCandidateFramesRef.current += 1;
+          if (speechCandidateFramesRef.current < SPEECH_START_FRAMES) {
+            return;
+          }
+          for (const frame of preRollRef.current) {
+            callbacksRef.current.onAudioFrame?.(floatToPcm16Base64(frame), targetSampleRate);
+          }
+          preRollRef.current = [];
         }
 
         speechActiveRef.current = true;
@@ -232,6 +255,8 @@ export function useMicrophone({
     emitWavFallback();
 
     speechActiveRef.current = false;
+    speechCandidateFramesRef.current = 0;
+    preRollRef.current = [];
     setIsRecording(false);
     setAudioLevel(0);
   }, [emitWavFallback]);
