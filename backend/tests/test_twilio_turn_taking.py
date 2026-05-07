@@ -3,7 +3,7 @@ Regression tests for Twilio PSTN turn-taking.
 """
 
 from app.models import CallSession
-from app.ws.call_handler import _is_twilio_noise_transcript
+from app.ws.call_handler import _is_twilio_noise_transcript, _twilio_spoken_text
 from app.ws.twilio_handler import (
     TWILIO_BARGE_IN_CHUNKS,
     TWILIO_SILENCE_END_CHUNKS,
@@ -73,3 +73,17 @@ def test_short_filler_transcript_is_ignored_before_pipeline():
 
     session.required_slot = "confirmation"
     assert not _is_twilio_noise_transcript(session, "Okay.")
+
+
+def test_twilio_confirmation_prompt_is_compacted_for_phone_playout():
+    spoken = _twilio_spoken_text(
+        "Got it. I will register this grievance for ration card grievance, pending for 2 months, "
+        "in Mysuru, using this caller mobile number as the reference, and route it to "
+        "Food and Civil Supplies department. Is that correct?"
+    )
+
+    assert spoken == (
+        "Got it. I have ration card, pending for 2 months, in Mysuru, using this mobile number. "
+        "I will route it to Food and Civil Supplies department. Is that correct?"
+    )
+    assert len(spoken) < 170

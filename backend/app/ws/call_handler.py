@@ -1163,7 +1163,32 @@ def _twilio_spoken_text(text: str) -> str:
             "A representative may contact you on this number if more details are needed. "
             f"Quote this ticket number to check status.{helpline} Thank you for calling Karnataka 1092."
         )
+    service_confirm = re.search(
+        r"^Got it\. I will register this grievance for (.+?), and route it to (.+?)\. Is that correct\?$",
+        cleaned,
+    )
+    if service_confirm:
+        summary = _compact_twilio_summary(service_confirm.group(1))
+        department = service_confirm.group(2)
+        return f"Got it. I have {summary}. I will route it to {department}. Is that correct?"
+    standard_confirm = re.search(
+        r"^(?:I understand this has been frustrating\. )?Let me confirm: (.+?)\. I will register this with (.+?)\. Is that correct\?$",
+        cleaned,
+    )
+    if standard_confirm:
+        summary = _compact_twilio_summary(standard_confirm.group(1))
+        department = standard_confirm.group(2)
+        return f"Let me confirm: {summary}. I will register it with {department}. Is that correct?"
     return cleaned[:420]
+
+
+def _compact_twilio_summary(summary: str) -> str:
+    cleaned = " ".join((summary or "").split())
+    cleaned = cleaned.replace("ration card grievance", "ration card")
+    cleaned = cleaned.replace("using this caller mobile number as the reference", "using this mobile number")
+    if len(cleaned) <= 140:
+        return cleaned
+    return cleaned[:137].rstrip(" ,.;") + "..."
 
 
 def _tts_language(session: CallSession) -> str:
