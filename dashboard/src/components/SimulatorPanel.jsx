@@ -244,6 +244,9 @@ export default function SimulatorPanel({
             <p><span className="text-white/80 font-bold">English:</span> Power cuts at my house in Whitefield, near Vydehi hospital.</p>
             <p><span className="text-white/80 font-bold">Hindi:</span> Mere area mein baar baar bijli ja rahi hai, Whitefield main road ke paas.</p>
             <p><span className="text-white/80 font-bold">Kannada:</span> Whitefield Vydehi hospital hattira current hogide.</p>
+            <p><span className="text-white/80 font-bold">Janaspandana:</span> My ration card application is pending for two months in Mysuru.</p>
+            <p><span className="text-white/80 font-bold">Safety:</span> No street lights from the metro to my house; I feel unsafe at night.</p>
+            <p><span className="text-white/80 font-bold">Emergency:</span> Someone is following me right now near the bus stop.</p>
           </div>
         </div>
         

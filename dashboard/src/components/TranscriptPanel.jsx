@@ -171,8 +171,13 @@ function ClassificationLog({ ev }) {
   return (
     <div className="space-y-1">
       <div className="text-emerald-300/80">
-        Classified: {ev.department || 'UNKNOWN'} / {ev.emergency_type || 'other'} ({percent(ev.confidence)})
+        Classified: {ev.request_type || 'grievance'} / {ev.department || 'UNKNOWN'} / {ev.emergency_type || 'other'} ({percent(ev.confidence)})
       </div>
+      {(ev.line_department || ev.specialized_helpline) && (
+        <div className="text-[10px] text-emerald-200/55">
+          Line dept: {ev.line_department || '--'}{ev.specialized_helpline ? ` | helpline ${ev.specialized_helpline}` : ''}
+        </div>
+      )}
       {(ev.priority || ev.severity) && (
         <div className="text-[10px] text-white/45">
           Priority {ev.priority || '--'} / severity {ev.severity || '--'}{ev.priority_reason ? ` - ${ev.priority_reason}` : ''}

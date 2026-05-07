@@ -130,11 +130,25 @@ export default function AnalysisCard({ analysis, mlRouting, sentiment, language,
         {/* Grid */}
         <div className="grid grid-cols-2 gap-6">
           <EditableField
+            label="Request Type"
+            value={getField('request_type', slots?.request_type || 'grievance')}
+            isEditing={isEditing}
+            isEdited={edits.request_type !== undefined}
+            onChange={(v) => handleEdit('request_type', v)}
+          />
+          <EditableField
             label="Department"
             value={getField('department', mlRouting?.department || 'UNASSIGNED')}
             isEditing={isEditing}
             isEdited={edits.department !== undefined}
             onChange={(v) => handleEdit('department', v)}
+          />
+          <EditableField
+            label="Line Dept"
+            value={getField('line_department', slots?.line_department || 'Pending')}
+            isEditing={isEditing}
+            isEdited={edits.line_department !== undefined}
+            onChange={(v) => handleEdit('line_department', v)}
           />
           <EditableField
             label="Type"
@@ -183,11 +197,24 @@ export default function AnalysisCard({ analysis, mlRouting, sentiment, language,
           </div>
         )}
 
-        {(analysis.priority_reason || analysis.empathy_note || analysis.abuse_action) && (
+        {(analysis.priority_reason || analysis.empathy_note || analysis.abuse_action || analysis.specialized_helpline || analysis.operator_hint || analysis.status_lookup) && (
           <div className="p-4 rounded-xl bg-white/[0.02] border border-white/10 space-y-3">
             <span className="text-[10px] font-bold uppercase tracking-widest text-white/40 block">
               Operator Guidance
             </span>
+            {analysis.operator_hint && (
+              <GuidanceRow label="Routing note" value={analysis.operator_hint} tone="sky" />
+            )}
+            {analysis.specialized_helpline && (
+              <GuidanceRow
+                label={analysis.emergency_referral ? 'Emergency referral' : 'Relevant helpline'}
+                value={`${analysis.specialized_helpline}${analysis.secondary_department ? ` | also note ${analysis.secondary_department}` : ''}`}
+                tone={analysis.emergency_referral ? 'red' : 'amber'}
+              />
+            )}
+            {analysis.status_lookup && (
+              <GuidanceRow label="Status lookup" value={analysis.status_lookup} tone="emerald" />
+            )}
             {analysis.priority_reason && (
               <GuidanceRow label="Priority basis" value={analysis.priority_reason} tone="amber" />
             )}
@@ -211,10 +238,14 @@ export default function AnalysisCard({ analysis, mlRouting, sentiment, language,
             </span>
             <div className="grid grid-cols-2 gap-2">
               <MiniStat label="Required" value={slots.required_slot || 'issue'} />
+              <MiniStat label="Request" value={slots.request_type || 'grievance'} />
+              <MiniStat label="Line Dept" value={slots.line_department || 'pending'} />
+              <MiniStat label="Service" value={slots.service_or_scheme || 'n/a'} />
               <MiniStat label="Specific" value={slots.location_specific ? 'yes' : 'no'} />
               <MiniStat label="Location" value={slots.location || 'pending'} />
               <MiniStat label="Loc Check" value={slots.location_validation_status || 'missing'} />
               <MiniStat label="Loc Conf" value={Number.isFinite(slots.location_confidence) ? `${Math.round(slots.location_confidence * 100)}%` : '--'} />
+              <MiniStat label="Helpline" value={slots.specialized_helpline || 'n/a'} />
               <MiniStat label="Attempts" value={slots.clarification_count ?? 0} />
             </div>
             {slots.location_validation_reason && (
@@ -371,6 +402,7 @@ function GuidanceRow({ label, value, tone }) {
     amber: 'text-amber-200 border-amber-500/20 bg-amber-500/5',
     sky: 'text-sky-200 border-sky-500/20 bg-sky-500/5',
     red: 'text-red-200 border-red-500/20 bg-red-500/5',
+    emerald: 'text-emerald-200 border-emerald-500/20 bg-emerald-500/5',
   };
   return (
     <div className={`rounded border px-3 py-2 ${colors[tone] || colors.sky}`}>

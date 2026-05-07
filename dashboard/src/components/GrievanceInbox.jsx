@@ -258,15 +258,22 @@ export default function GrievanceInbox() {
                             <Info className="w-3 h-3" /> Ticket Intake Memory
                           </span>
                           <div className="grid grid-cols-2 gap-3 text-xs">
+                            <MemoryField label="Request Type" value={memory.request_type} />
                             <MemoryField label="Issue" value={memory.issue || g.emergency_type} />
                             <MemoryField label="Department" value={memory.department || g.department_assigned} />
+                            <MemoryField label="Line Department" value={memory.line_department} />
+                            <MemoryField label="Service/Scheme" value={memory.service_or_scheme} />
+                            <MemoryField label="Application/Ref" value={memory.application_or_reference || memory.previous_complaint} />
                             <MemoryField label="Area" value={memory.area || g.location_hint} />
                             <MemoryField label="Landmark" value={memory.landmark} />
                             <MemoryField label="Time" value={memory.started_at_or_time} />
                             <MemoryField label="Frequency" value={memory.frequency} />
+                            <MemoryField label="Office Visited" value={memory.office_visited} />
+                            <MemoryField label="Documents/Photo" value={memory.documents_available} />
                             <MemoryField label="Tried Before" value={memory.caller_tried} wide />
                             <MemoryField label="Authority Contacted" value={memory.authority_contacted} />
-                            <MemoryField label="Previous Ticket" value={memory.previous_complaint} />
+                            <MemoryField label="Referral/Helpline" value={memory.emergency_referral ? `Emergency: ${memory.specialized_helpline || 'operator'}` : memory.specialized_helpline} />
+                            <MemoryField label="Status Lookup" value={memory.status_lookup} wide />
                             <MemoryField label="Learning" value={g.learning_feedback_type || (g.agent_edited ? 'agent_edit' : g.caller_confirmed ? 'verified' : '')} />
                           </div>
                         </div>

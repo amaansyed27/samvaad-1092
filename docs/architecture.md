@@ -80,7 +80,9 @@ An asynchronous SQLite database (`aiosqlite`) captures the full lifecycle of a c
 
 ## Current Live Demo Architecture Update
 
-The live path now includes a deterministic call-center intake layer on top of the FSM. The assistant acknowledges the grievance, asks one question at a time, and verifies only after the required ticket fields are ready: issue, department, and usable location. Optional operational fields are stored when available: time, frequency, caller attempts, authority contact, and previous complaint ID.
+The live path now includes a deterministic Janaspandana-style call-center intake layer on top of the FSM. The assistant acknowledges the grievance, asks one question at a time, and verifies only after the required ticket fields are ready: issue, request type, department or line department, and usable location or public-service reference. It covers civic utilities plus broader Karnataka public grievances such as ration card, labour, health, pension, RTO, education, revenue, municipality, and panchayat cases. Optional operational fields are stored when available: scheme/service, application/reference number, office visited, documents/photo availability, time, frequency, caller attempts, authority contact, and previous complaint ID.
+
+Emergency and specialized helpline handling is separate from routine grievance intake. Immediate danger becomes `emergency_referral`, stops optional questioning, and hands the call to a human/specialized flow. Non-emergency specialized issues can still be logged as 1092 grievances while showing the relevant helpline note, such as BESCOM 1912, BWSSB 1916, BBMP 1533, Health 104, Ambulance 102/108, Women 181, Police 100, or Fire 101.
 
 Persistence has been expanded beyond a single transcript. Each call record stores raw transcript, scrubbed transcript, caller/assistant turn log, structured conversation memory, agent corrections, and active-learning feedback type.
 

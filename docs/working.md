@@ -49,11 +49,13 @@ The current live call path is optimized for first-level grievance intake:
 1. The caller selects language through IVR: English, Kannada, or Hindi.
 2. The language choice locks STT/TTS for the rest of the call.
 3. The assistant acknowledges the issue before asking for details.
-4. Required fields are collected first: issue, department, and usable location.
+4. Required fields are collected first: issue, request type, department or line department, and usable location or public-service reference.
 5. Location is validated through the dynamic location resolver. Heard landmarks are searched through the configured geocoder, map candidates are shown on the dashboard, and weak matches trigger a caller confirmation or operator map pin.
-6. Optional details are asked only when useful: time, frequency, whether the issue is happening now, what the caller already tried, authority contact, and prior complaint number.
-7. If the caller says "just create ticket" or sounds urgent/frustrated, optional questions are skipped and the assistant verifies immediately.
-8. Confirmed calls persist the full turn log and structured memory to the Civic Inbox.
+6. Janaspandana-style service details are captured when relevant: scheme/service name, application/reference number, office visited, official contacted, and document/photo availability.
+7. Optional details are asked only when useful: time, frequency, whether the issue is happening now, what the caller already tried, authority contact, and prior complaint number.
+8. If the caller says "just create ticket" or sounds urgent/frustrated, optional questions are skipped and the assistant verifies immediately.
+9. Immediate danger becomes `emergency_referral`; the assistant stops normal intake and hands off to a human/specialized helpline path.
+10. Confirmed calls persist the full turn log and structured memory to the Civic Inbox.
 
 ## Dynamic Location Resolver
 

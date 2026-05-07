@@ -11,6 +11,7 @@ Use this before the Twilio test. Start with the browser debug path at `http://lo
 - Confirmation is short, clean, and human-readable.
 - Verified closure includes ticket ID, lookup instruction, SMS mention, and courteous ending.
 - If the caller is confused, urgent, or frustrated, optional questions stop and the system moves to verification or human takeover.
+- Janaspandana-style cases show `request_type`, `line_department`, status lookup, and any specialized helpline/referral note.
 
 ## Core Happy Path
 
@@ -48,9 +49,69 @@ Expected:
 - Ticket ID logged.
 - Civic Inbox detailed view has full conversation and extracted fields.
 
+## Janaspandana / iPGRS Public Grievance Cases
+
+### 2. Ration Card Delay
+Say:
+> My ration card application is pending for two months in Mysuru.
+
+Expected:
+- `request_type=grievance`
+- `department=FOOD_CIVIL_SUPPLIES`
+- `line_department=Food and Civil Supplies department`
+- Service/scheme stores `ration card`.
+- Assistant asks for missing application/reference or office detail before verification if needed.
+
+### 3. Labour Wages Complaint
+Say:
+> The labour office is not responding about unpaid wages in Peenya.
+
+Expected:
+- `department=LABOUR`
+- `issue=labour_grievance`
+- Assistant captures office/service context and asks for employer, office, or location if missing.
+
+### 4. Hospital Service Complaint
+Say:
+> Government hospital staff refused medicine for my child in Jayanagar.
+
+Expected:
+- `department=HEALTH`
+- Relevant helpline `104` is visible.
+- Priority should become `MEDIUM` or `HIGH` because a child/medicine impact is described.
+
+### 5. Pension or Welfare Delay
+Say:
+> My old age pension has not been received for three months in Tumakuru.
+
+Expected:
+- `department=SOCIAL_WELFARE`
+- `issue=pension_delay`
+- Assistant asks for scheme/application/reference or office details if missing.
+
+### 6. Immediate Public Safety Referral
+Say:
+> Someone is following me right now near Majestic bus stop.
+
+Expected:
+- `request_type=emergency_referral`
+- `department=POLICE`
+- Relevant helpline `100` is visible.
+- AI should stop normal intake and say it is connecting/referring to a human operator.
+
+### 7. Water + Health Cross-Department Case
+Say:
+> Water is contaminated near Whitefield and my child is sick.
+
+Expected:
+- Primary `department=BWSSB`
+- Secondary note should mention `HEALTH`.
+- Priority should become `MEDIUM` or `HIGH`.
+- The ticket should not hide the health concern as only a water complaint.
+
 ## Location Edge Cases
 
-### 2. Misheard Landmark
+### 8. Misheard Landmark
 Say:
 > Power cuts near Espelad Apartments.
 
@@ -66,7 +127,7 @@ Expected:
 - `location_validation_status=map_confirmed`
 - `location_confirmed=true`
 
-### 3. Broad Major Location
+### 9. Broad Major Location
 Say:
 > Power cut at Airport.
 
@@ -74,7 +135,7 @@ Expected:
 - System should not accept this as dispatch-ready.
 - It should ask for terminal, gate, road, ward, or a smaller landmark.
 
-### 4. Fake or Test Location
+### 10. Fake or Test Location
 Say:
 > Power cut at Whitefield near Vydehi hospital but this is a dummy location.
 
@@ -82,7 +143,7 @@ Expected:
 - `location_validation_status=needs_correction`
 - Ticket should not be ready.
 
-### 5. Browser Map Pin
+### 11. Browser Map Pin
 In debug mode, click **Send Pin**.
 
 Expected:
