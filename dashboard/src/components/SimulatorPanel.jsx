@@ -33,6 +33,7 @@ export default function SimulatorPanel({
     onAudioChunk: (base64Data) => {
       if (!onSendAudioFrame && onSendAudio) onSendAudio(base64Data);
     },
+    inputBlocked: isAssistantSpeaking,
     chunkIntervalMs: 3000,
   });
 
@@ -319,7 +320,7 @@ export default function SimulatorPanel({
               </span>
               {isRecording && (
                 <span className="text-[10px] text-red-400/60 uppercase tracking-widest">
-                  Streaming 16 kHz PCM frames...
+                  {isAssistantSpeaking ? 'Waiting for assistant audio to finish...' : 'Streaming 16 kHz PCM frames...'}
                 </span>
               )}
               {micError && (

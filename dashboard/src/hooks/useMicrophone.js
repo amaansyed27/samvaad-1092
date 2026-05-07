@@ -46,6 +46,23 @@ function floatToPcm16Base64(samples) {
   return btoa(binary);
 }
 
+function resampleFloat32(samples, fromRate, toRate) {
+  if (!samples.length || fromRate === toRate) return samples;
+  const ratio = fromRate / toRate;
+  const outputLength = Math.max(1, Math.floor(samples.length / ratio));
+  const output = new Float32Array(outputLength);
+
+  for (let i = 0; i < outputLength; i++) {
+    const sourceIndex = i * ratio;
+    const left = Math.floor(sourceIndex);
+    const right = Math.min(left + 1, samples.length - 1);
+    const weight = sourceIndex - left;
+    output[i] = samples[left] * (1 - weight) + samples[right] * weight;
+  }
+
+  return output;
+}
+
 function rms(samples) {
   let sum = 0;
   for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i];
@@ -59,6 +76,7 @@ export function useMicrophone({
   onAudioFrame,
   onAudioEnd,
   onAudioChunk,
+  inputBlocked = false,
   chunkIntervalMs = 3000,
   sampleRate = 16000,
 } = {}) {
@@ -70,11 +88,18 @@ export function useMicrophone({
   const audioCtxRef = useRef(null);
   const processorRef = useRef(null);
   const analyserRef = useRef(null);
+  const silentGainRef = useRef(null);
   const animFrameRef = useRef(null);
   const wavBufferRef = useRef([]);
   const intervalRef = useRef(null);
   const silenceTimerRef = useRef(null);
   const speechActiveRef = useRef(false);
+  const inputSampleRateRef = useRef(sampleRate);
+  const inputBlockedRef = useRef(inputBlocked);
+
+  useEffect(() => {
+    inputBlockedRef.current = inputBlocked;
+  }, [inputBlocked]);
 
   const updateLevel = useCallback(() => {
     if (!analyserRef.current) return;
@@ -119,12 +144,18 @@ export function useMicrophone({
     try {
       setError(null);
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { channelCount: 1, sampleRate, echoCancellation: true, noiseSuppression: true },
+        audio: {
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
       });
       streamRef.current = stream;
 
-      const audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate });
+      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       audioCtxRef.current = audioCtx;
+      inputSampleRateRef.current = audioCtx.sampleRate || sampleRate;
       const source = audioCtx.createMediaStreamSource(stream);
 
       const analyser = audioCtx.createAnalyser();
@@ -134,12 +165,22 @@ export function useMicrophone({
 
       const processor = audioCtx.createScriptProcessor(2048, 1, 1);
       processorRef.current = processor;
+      const silentGain = audioCtx.createGain();
+      silentGain.gain.value = 0;
+      silentGainRef.current = silentGain;
       wavBufferRef.current = [];
 
       processor.onaudioprocess = (e) => {
         const inputData = new Float32Array(e.inputBuffer.getChannelData(0));
-        wavBufferRef.current.push(inputData);
+        const resampled = resampleFloat32(inputData, inputSampleRateRef.current, sampleRate);
+        wavBufferRef.current.push(resampled);
         const level = rms(inputData);
+
+        if (inputBlockedRef.current) {
+          speechActiveRef.current = false;
+          if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+          return;
+        }
 
         if (level < SPEECH_RMS_THRESHOLD) {
           markSpeechEndSoon();
@@ -148,12 +189,13 @@ export function useMicrophone({
 
         speechActiveRef.current = true;
         if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-        onAudioFrame?.(floatToPcm16Base64(inputData), sampleRate);
+        onAudioFrame?.(floatToPcm16Base64(resampled), sampleRate);
       };
 
       source.connect(analyser);
-      analyser.connect(processor);
-      processor.connect(audioCtx.destination);
+      source.connect(processor);
+      processor.connect(silentGain);
+      silentGain.connect(audioCtx.destination);
 
       if (onAudioChunk) {
         intervalRef.current = setInterval(emitWavFallback, chunkIntervalMs);
@@ -164,12 +206,13 @@ export function useMicrophone({
       setError(err.message);
       console.error('[Microphone] Failed to start:', err);
     }
-  }, [chunkIntervalMs, emitWavFallback, markSpeechEndSoon, onAudioChunk, onAudioFrame, sampleRate, updateLevel]);
+  }, [chunkIntervalMs, emitWavFallback, inputBlocked, markSpeechEndSoon, onAudioChunk, onAudioFrame, sampleRate, updateLevel]);
 
   const stopRecording = useCallback(() => {
     if (intervalRef.current) clearInterval(intervalRef.current);
     if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
     if (processorRef.current) processorRef.current.disconnect();
+    if (silentGainRef.current) silentGainRef.current.disconnect();
     if (audioCtxRef.current) audioCtxRef.current.close();
     if (streamRef.current) streamRef.current.getTracks().forEach((track) => track.stop());
     if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
