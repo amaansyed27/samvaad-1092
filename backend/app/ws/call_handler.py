@@ -64,6 +64,8 @@ class ConnectionManager:
         self._assistant_started_at: dict[str, float] = {}
         self._turn_started_at: dict[str, float] = {}
         self._last_partial_at: dict[str, float] = {}
+        self._twilio_input_block_until: dict[str, float] = {}
+        self._last_unclear_prompt_at: dict[str, float] = {}
 
     @property
     def active_sessions(self) -> dict[str, CallSession]:
@@ -72,6 +74,31 @@ class ConnectionManager:
     def is_assistant_speaking(self, call_id: str) -> bool:
         task = self._tts_tasks.get(call_id)
         return bool(task and not task.done())
+
+    def has_twilio_connection(self, call_id: str) -> bool:
+        return any(getattr(conn, "is_twilio", False) for conn in self._connections.get(call_id, []))
+
+    def is_twilio_input_blocked(self, call_id: str) -> bool:
+        return time.perf_counter() < self._twilio_input_block_until.get(call_id, 0.0)
+
+    def twilio_input_block_remaining_ms(self, call_id: str) -> int:
+        remaining = self._twilio_input_block_until.get(call_id, 0.0) - time.perf_counter()
+        return max(0, int(remaining * 1000))
+
+    def _hold_twilio_input(self, call_id: str, seconds: float) -> None:
+        if not self.has_twilio_connection(call_id):
+            return
+        self._twilio_input_block_until[call_id] = max(
+            self._twilio_input_block_until.get(call_id, 0.0),
+            time.perf_counter() + max(0.0, seconds),
+        )
+
+    def _queue_twilio_audio_block(self, call_id: str, audio_seconds: float) -> None:
+        if not self.has_twilio_connection(call_id):
+            return
+        now = time.perf_counter()
+        base = max(self._twilio_input_block_until.get(call_id, 0.0), now)
+        self._twilio_input_block_until[call_id] = base + max(0.0, audio_seconds)
 
     async def connect_dashboard(self, ws: WebSocket) -> None:
         """Register a global dashboard observer."""
@@ -286,6 +313,13 @@ class ConnectionManager:
             await self._broadcast(call_id, {
                 "event": "stt_status",
                 "status": "empty_audio_buffer",
+            })
+            return
+        if msg.get("source") == "twilio" and len(pcm) < 16000:
+            await self._broadcast(call_id, {
+                "event": "stt_status",
+                "status": "short_twilio_buffer_ignored",
+                "buffered_bytes": len(pcm),
             })
             return
         sample_rate = int(msg.get("sample_rate") or 16000)
@@ -669,6 +703,7 @@ class ConnectionManager:
 
         await self._broadcast(call_id, {"event": "assistant_text", "text": text})
         self._assistant_started_at[call_id] = time.perf_counter()
+        self._hold_twilio_input(call_id, 0.9)
         self._append_conversation_turn(session, "assistant", text, language_code=_tts_language(session))
         await self._broadcast(call_id, {
             "event": "conversation_turn",
@@ -692,6 +727,14 @@ class ConnectionManager:
                 ):
                     if not chunk.get("audio_base64"):
                         continue
+                    self._queue_twilio_audio_block(
+                        call_id,
+                        _estimate_audio_seconds(
+                            chunk["audio_base64"],
+                            chunk.get("codec", "wav"),
+                            int(chunk.get("sample_rate") or 24000),
+                        ),
+                    )
                     if not first_audio_sent:
                         first_audio_ms = (time.perf_counter() - tts_start) * 1000
                         session.latency_marks["tts_first_audio_ms"] = first_audio_ms
@@ -710,6 +753,8 @@ class ConnectionManager:
                     "total_turn_gap_ms": total_gap,
                 }
                 await self._broadcast(call_id, {"event": "latency_metrics", "metrics": metrics})
+                if first_audio_sent:
+                    self._hold_twilio_input(call_id, 0.65)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -721,6 +766,14 @@ class ConnectionManager:
         """Fast recovery when STT hears audio but cannot produce text."""
         if session.state in (VerificationState.VERIFIED.value, VerificationState.HUMAN_TAKEOVER.value):
             return
+        now = time.perf_counter()
+        if now - self._last_unclear_prompt_at.get(call_id, 0.0) < 4.0:
+            await self._broadcast(call_id, {
+                "event": "stt_status",
+                "status": "unclear_prompt_suppressed",
+            })
+            return
+        self._last_unclear_prompt_at[call_id] = now
         prompt = _unclear_audio_prompt(session)
         await self._broadcast(call_id, {
             "event": "clarification_required",
@@ -890,6 +943,21 @@ def _audio_event_to_twilio_mulaw(data: dict) -> str:
         pcm, _ = audioop.ratecv(pcm, 2, 1, sample_rate, 8000, None)
     mulaw = audioop.lin2ulaw(pcm, 2)
     return base64.b64encode(mulaw).decode("utf-8")
+
+
+def _estimate_audio_seconds(audio_b64: str, codec: str, sample_rate: int) -> float:
+    try:
+        raw = base64.b64decode(audio_b64)
+        if codec == "wav" or raw[:4] == b"RIFF":
+            with wave.open(io.BytesIO(raw), "rb") as wav:
+                frames = wav.getnframes()
+                rate = wav.getframerate() or sample_rate
+            return frames / rate if rate else 0.0
+        if codec == "mulaw":
+            return len(raw) / float(sample_rate or 8000)
+        return len(raw) / float(2 * (sample_rate or 24000))
+    except Exception:
+        return 0.0
 
 
 def _tts_language(session: CallSession) -> str:

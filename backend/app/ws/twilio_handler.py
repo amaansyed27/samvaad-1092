@@ -12,6 +12,7 @@ import audioop
 import base64
 import json
 import logging
+import time
 from fastapi import WebSocket, WebSocketDisconnect
 
 from app.ws.call_handler import get_manager
@@ -28,8 +29,10 @@ class TwilioMediaStreamHandler:
         self._speech_active = False
         self._silence_chunks = 0
         self._speech_chunks = 0
+        self._candidate_chunks = 0
         self._ratecv_state = None
         self._pre_roll_frames: list[bytes] = []
+        self._last_blocked_notice_at = 0.0
 
     async def handle(self) -> None:
         await self.ws.accept()
@@ -106,11 +109,37 @@ class TwilioMediaStreamHandler:
 
                     # Calculate RMS energy for VAD (Silence Gating)
                     rms = audioop.rms(pcm_16k, 2)
-                    assistant_speaking = bool(self.call_id and self.manager.is_assistant_speaking(self.call_id))
-                    speech_threshold = 120 if assistant_speaking else 22
-                    is_speech = rms > speech_threshold
                     self._pre_roll_frames.append(pcm_16k)
                     self._pre_roll_frames = self._pre_roll_frames[-5:]
+
+                    if self.call_id and self.manager.is_twilio_input_blocked(self.call_id):
+                        self._speech_active = False
+                        self._silence_chunks = 0
+                        self._speech_chunks = 0
+                        self._candidate_chunks = 0
+                        self._pre_roll_frames.clear()
+                        now = time.perf_counter()
+                        if now - self._last_blocked_notice_at > 1.0:
+                            self._last_blocked_notice_at = now
+                            await self.manager._broadcast(self.call_id, {
+                                "event": "audio_activity",
+                                "source": "twilio",
+                                "status": "assistant_playout_blocked",
+                                "rms": rms,
+                                "remaining_ms": self.manager.twilio_input_block_remaining_ms(self.call_id),
+                            })
+                        continue
+
+                    start_threshold = 110
+                    continue_threshold = 65
+                    if self._speech_active:
+                        is_speech = rms > continue_threshold
+                    else:
+                        if rms > start_threshold:
+                            self._candidate_chunks += 1
+                        else:
+                            self._candidate_chunks = max(0, self._candidate_chunks - 1)
+                        is_speech = self._candidate_chunks >= 3
 
                     if is_speech and not self._speech_active:
                         await self.manager._broadcast(self.call_id, {
@@ -139,7 +168,7 @@ class TwilioMediaStreamHandler:
                             "sample_rate": 16000,
                             "source": "twilio",
                             "rms": rms,
-                            "barge_in": bool(is_speech and rms >= 90),
+                            "barge_in": False,
                         }
                         await self.manager.handle_message(self.ws, self.session, json.dumps(msg))
 
@@ -149,11 +178,11 @@ class TwilioMediaStreamHandler:
                         self._speech_chunks += 1
 
                         # Demo latency guard: don't wait for a long natural pause on PSTN.
-                        if self._speech_chunks >= 70:
+                        if self._speech_chunks >= 190:
                             await self.manager.handle_message(
                                 self.ws,
                                 self.session,
-                                json.dumps({"type": "audio_end", "sample_rate": 16000}),
+                                json.dumps({"type": "audio_end", "sample_rate": 16000, "source": "twilio"}),
                             )
                             await self.manager._broadcast(self.call_id, {
                                 "event": "audio_activity",
@@ -164,13 +193,14 @@ class TwilioMediaStreamHandler:
                             self._speech_active = False
                             self._silence_chunks = 0
                             self._speech_chunks = 0
+                            self._candidate_chunks = 0
                     elif self._speech_active:
                         self._silence_chunks += 1
-                        if self._silence_chunks >= 8:
+                        if self._silence_chunks >= 14:
                             await self.manager.handle_message(
                                 self.ws,
                                 self.session,
-                                json.dumps({"type": "audio_end", "sample_rate": 16000}),
+                                json.dumps({"type": "audio_end", "sample_rate": 16000, "source": "twilio"}),
                             )
                             await self.manager._broadcast(self.call_id, {
                                 "event": "audio_activity",
@@ -181,13 +211,14 @@ class TwilioMediaStreamHandler:
                             self._speech_active = False
                             self._silence_chunks = 0
                             self._speech_chunks = 0
+                            self._candidate_chunks = 0
                     
                 elif event == "stop":
                     if self.session and self._speech_active:
                         await self.manager.handle_message(
                             self.ws,
                             self.session,
-                            json.dumps({"type": "audio_end", "sample_rate": 16000}),
+                            json.dumps({"type": "audio_end", "sample_rate": 16000, "source": "twilio"}),
                         )
                     logger.info(f"Twilio Call Stopped: StreamSid={self.stream_sid}")
                     break
