@@ -57,8 +57,10 @@ class CallSession(BaseModel):
     preferred_language_label: str = "auto"
     language_detected: str = "unknown"
     raw_transcript: str = ""
+    latest_transcript: str = ""
     partial_transcript: str = ""
     scrubbed_transcript: str = ""
+    latest_scrubbed_transcript: str = ""
     restated_summary: str = ""
     caller_confirmed: bool | None = None
     clarification_count: int = 0

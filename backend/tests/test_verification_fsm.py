@@ -325,6 +325,25 @@ class TestHackathonGuardrails:
         assert memory["service_or_scheme"] == "ration card"
         assert memory["area"] == "Mysuru"
 
+    def test_ration_card_mobile_reference_moves_to_clean_confirmation(self, session):
+        _build_fast_analysis(session, "My ration card application is pending for 2 months in Mysuru", 0.2)
+        assert session.required_slot == "application_or_reference"
+        session.optional_detail_count = 1
+
+        data = _build_fast_analysis(session, "Yes, it is linked with the same mobile number.", 0.2)
+        session.analysis_result = AnalysisResult(**data)
+        message = _build_restatement(session)
+        memory = session.conversation_memory
+
+        assert session.required_slot == "confirmation"
+        assert memory["application_or_reference"] == "linked with caller mobile number"
+        assert memory["area"] == "Mysuru"
+        assert memory["landmark"] == ""
+        assert memory["started_at_or_time"] == "pending for 2 months"
+        assert "same mobile" not in message.lower()
+        assert "Mysuru. Yes" not in message
+        assert "Food and Civil Supplies department" in message
+
     def test_labour_wages_routes_to_labour_department(self, session):
         data = _build_fast_analysis(
             session,

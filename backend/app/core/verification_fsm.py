@@ -523,7 +523,8 @@ class VerificationEngine:
             
             # Treat longer ambiguous replies as corrections/details and re-run the slot loop.
             self._transition(session, VerificationState.LISTEN)
-            session.raw_transcript += " " + transcript.strip()
+            session.latest_transcript = transcript.strip()
+            session.raw_transcript += " " + session.latest_transcript
             self._transition(session, VerificationState.SCRUB)
             return {
                 "event": "state_change",
@@ -532,7 +533,8 @@ class VerificationEngine:
             }
 
         # Normal loop
-        session.raw_transcript += " " + transcript.strip()
+        session.latest_transcript = transcript.strip()
+        session.raw_transcript += " " + session.latest_transcript
         self._transition(session, VerificationState.SCRUB)
         return {"event": "state_change", "state": "SCRUB"}
 
@@ -545,7 +547,9 @@ class VerificationEngine:
         SECURITY: This MUST complete before any LLM call.
         """
         clean, entities = self._scrubber.scrub(session.raw_transcript)
+        latest_clean, _ = self._scrubber.scrub(session.latest_transcript or "")
         session.scrubbed_transcript = clean
+        session.latest_scrubbed_transcript = latest_clean
         session.pii_entities_found = entities
         self._transition(session, VerificationState.ANALYZE)
         return {
@@ -565,7 +569,7 @@ class VerificationEngine:
             2. Gemini Flash (analysis)
             3. DeepSeek (cultural nuance fallback)
         """
-        transcript = session.scrubbed_transcript
+        transcript = session.latest_scrubbed_transcript or session.scrubbed_transcript
         acoustic_score = session.distress_score or 0.0
 
         analysis_data = _build_fast_analysis(session, transcript, acoustic_score)
@@ -842,6 +846,11 @@ def _update_conversation_memory(
     application_reference = _extract_application_reference(text)
     if application_reference:
         memory["application_or_reference"] = application_reference
+    elif session.required_slot == "application_or_reference":
+        fallback_reference = _extract_reference_fallback(text)
+        if fallback_reference:
+            memory["application_or_reference"] = fallback_reference
+            memory["skip_optional"] = True
     office_visited = _extract_office_visited(text)
     if office_visited:
         memory["office_visited"] = office_visited
@@ -908,7 +917,7 @@ def _update_conversation_memory(
         memory["currently_happening"] = "yes"
     if any(term in lower for term in ("every night", "daily", "again and again", "many times", "repeated", "too many")):
         memory["frequency"] = _extract_frequency(text)
-    if any(term in lower for term in ("since", "morning", "evening", "night", "yesterday", "today", "week", "month")):
+    if any(term in lower for term in ("since", "morning", "evening", "night", "yesterday", "today", "week", "month")) and session.required_slot in {"issue", "started_at_or_time", "frequency"}:
         memory["started_at_or_time"] = _extract_time_detail(text)
     if any(term in lower for term in ("tried", "checked", "called", "reported", "complained", "complaint")):
         memory["caller_tried"] = _extract_caller_tried(text)
@@ -920,13 +929,14 @@ def _update_conversation_memory(
     if previous:
         memory["previous_complaint"] = previous
 
+    effective_department = department if department not in {"OTHER", "UNKNOWN", "UNASSIGNED"} else memory.get("department")
     service_reference_ready = bool(memory.get("application_or_reference") or memory.get("service_or_scheme") or memory.get("office_visited"))
     service_location_ready = bool(memory.get("area") or memory.get("landmark"))
     usable_location = (
         (bool(memory.get("landmark")) or _is_specific_location(memory.get("area")))
         and validation["status"] in {"usable", "verified_format", "map_confirmed", "pin_verified"}
     )
-    service_ready = department in _SERVICE_GRIEVANCE_DEPARTMENTS and service_location_ready and service_reference_ready
+    service_ready = effective_department in _SERVICE_GRIEVANCE_DEPARTMENTS and service_location_ready and service_reference_ready
     if service_ready and not usable_location:
         memory["location_validation_status"] = "service_area"
         memory["location_validation_reason"] = "Public-service grievance has enough district/area or office context for intake."
@@ -1065,6 +1075,7 @@ def _extract_time_detail(text: str) -> str:
     patterns = [
         r"since\s+[^,.]+",
         r"for\s+the\s+past\s+[^,.]+",
+        r"(?:pending\s+)?for\s+\d+\s+(?:days?|weeks?|months?|years?)",
         r"past\s+[^,.]+",
         r"\b\d+\s+(?:continuous\s+)?cuts?\s+in\s+\d+\s+days?\b",
         r"each\s+cut\s+(?:has\s+)?lasted\s+[^,.]+",
@@ -1139,6 +1150,17 @@ def _extract_application_reference(text: str) -> str:
     )
     if match:
         return match.group(0).strip(" .,:;")
+    return ""
+
+
+def _extract_reference_fallback(text: str) -> str:
+    lower = " ".join((text or "").lower().split())
+    if not lower:
+        return ""
+    if any(term in lower for term in ("same mobile", "linked mobile", "mobile number", "phone number", "this number")):
+        return "linked with caller mobile number"
+    if any(term in lower for term in ("no", "don't have", "do not have", "not have", "not available", "i do not know", "i don't know")):
+        return "not provided; use caller mobile number"
     return ""
 
 
@@ -2618,6 +2640,8 @@ def _build_conversational_restatement(
             return "ಧನ್ಯವಾದಗಳು. ನಿಮ್ಮ ಬಳಿ ಹಿಂದಿನ ದೂರು ಅಥವಾ ಟಿಕೆಟ್ ಸಂಖ್ಯೆ ಇದೆಯೇ?"
         return "Thanks. Do you already have an earlier complaint or ticket number for this?"
     if session.required_slot == "application_or_reference":
+        if memory.get("service_or_scheme") == "ration card":
+            return "I can register this now. Do you have the ration card application number, or should I use this caller mobile number as the reference?"
         return "Do you have an application, scheme, ration card, pension, or reference number I should add?"
     if session.required_slot == "office_visited":
         return "Which office or official did you already visit or contact, if any?"
@@ -2625,6 +2649,24 @@ def _build_conversational_restatement(
         return "Do you have any document, photo, receipt, or SMS proof available?"
 
     if session.required_slot == "confirmation":
+        if department in _SERVICE_GRIEVANCE_DEPARTMENTS:
+            service = memory.get("service_or_scheme") or issue
+            area = memory.get("area") or location
+            time_detail = memory.get("started_at_or_time", "")
+            ref = memory.get("application_or_reference", "")
+            parts = [service]
+            if time_detail:
+                parts.append(time_detail)
+            if area:
+                parts.append(f"in {area}")
+            if ref:
+                if "caller mobile" in ref:
+                    parts.append("using this caller mobile number as the reference")
+                else:
+                    parts.append(f"reference {ref}")
+            summary = ", ".join(part for part in parts if part)
+            line_department = memory.get("line_department") or _line_department_for(department, memory.get("issue"))
+            return f"Got it. I will register this grievance for {summary}, and route it to {line_department}. Is that correct?"
         detail = ""
         if memory.get("frequency"):
             if language == "hindi":
