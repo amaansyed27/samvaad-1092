@@ -926,7 +926,8 @@ def _area_from_location(location: str) -> str:
     for area in preferred_areas:
         if area in lower:
             return area.title()
-    for area in _BROAD_LOCATION_TERMS:
+    generic_terms = {"area", "district", "taluk", "ward", "village", "city"}
+    for area in _BROAD_LOCATION_TERMS - generic_terms:
         if area in lower:
             return area.title()
     return ""
@@ -1095,7 +1096,7 @@ def _build_fast_analysis(
     semantic_distress = priority_data["semantic_distress"]
     severity = priority_data["severity"]
     priority = priority_data["priority"]
-    requires_takeover = sentiment == "fear" or priority_data["requires_takeover"]
+    requires_takeover = priority_data["requires_takeover"]
     memory["priority_reason"] = priority_data["reason"]
     memory["empathy_note"] = _build_empathy_note(sentiment, priority, memory, abuse)
     session.conversation_memory = memory
@@ -1227,6 +1228,8 @@ def _preferred_language(session: CallSession, detected: str | None = None) -> st
 
 def _infer_department(transcript: str) -> str:
     text = transcript.lower()
+    if _has_streetlight_issue(text):
+        return "BBMP"
     if any(term in text for term in (
         "power",
         "electric",
@@ -1261,6 +1264,8 @@ def _infer_department(transcript: str) -> str:
 
 def _infer_emergency_type(transcript: str, department: str) -> str:
     text = transcript.lower()
+    if _has_streetlight_issue(text):
+        return "streetlights"
     if any(term in text for term in (
         "power",
         "electric",
@@ -1283,8 +1288,6 @@ def _infer_emergency_type(transcript: str, department: str) -> str:
         "kaditavide",
     )):
         return "power_outage"
-    if "streetlight" in text:
-        return "streetlights"
     if department == "BWSSB":
         return "water_supply"
     if department == "BBMP" and any(term in text for term in ("road", "pothole", "street", "footpath")):
@@ -1333,6 +1336,23 @@ def _has_issue_signal(transcript: str, department: str, emergency_type: str) -> 
         "kaditavide",
     )
     return any(term in text for term in issue_terms)
+
+
+def _has_streetlight_issue(text: str) -> bool:
+    lower = (text or "").lower()
+    return any(
+        term in lower
+        for term in (
+            "streetlight",
+            "street light",
+            "street lights",
+            "road light",
+            "road lights",
+            "no lights",
+            "no light",
+            "lights are not working",
+        )
+    )
 
 
 def _assess_abuse_or_prank(transcript: str, has_issue: bool) -> dict[str, Any]:
@@ -1421,6 +1441,9 @@ def _score_priority(
     if any(term in text for term in _URGENCY_TERMS):
         score += 0.25
         reasons.append("urgent/safety wording")
+    if any(term in text for term in ("do not feel safe", "don't feel safe", "not feel safe", "shady area", "people keep staring", "staring at me")):
+        score += 0.25
+        reasons.append("caller reports personal safety concern")
     if any(term in text for term in ("past week", "for the past week", "many times", "again and again", "repeated", "continuous")):
         score += 0.18
         reasons.append("repeated or long-running issue")
@@ -1448,15 +1471,27 @@ def _score_priority(
         priority = "LOW"
         severity = "low"
 
+    immediate_takeover_terms = (
+        "scared",
+        "danger",
+        "threat",
+        "sparking",
+        "fire",
+        "shock",
+        "wire down",
+        "following me",
+        "being followed",
+        "attacking",
+        "help now",
+    )
     return {
         "semantic_distress": score,
         "severity": severity,
         "priority": priority,
         "requires_takeover": (
-            score >= 0.9
-            or sentiment == "fear"
-            or (priority == "HIGH" and acoustic_score >= 0.75)
-            or (priority == "HIGH" and any(term in text for term in ("danger", "unsafe", "sparking", "fire", "shock", "wire down")))
+            emergency_type in {"fire", "gas_leak"}
+            or any(term in text for term in immediate_takeover_terms)
+            or (priority == "HIGH" and acoustic_score >= 0.85 and sentiment in {"fear", "urgent"})
         ),
         "reason": "; ".join(reasons) or "Routine civic intake based on current details.",
     }
@@ -1524,7 +1559,7 @@ def _extract_label_value(text: str, labels: tuple[str, ...]) -> str:
 def _clean_location_hint(location: str) -> str:
     cleaned = location.strip(" .,:;")
     cleaned = re.split(
-        r"\b(?:i need help|please help|that is all|thank you|thanks|can you help|just create ticket|create ticket|log ticket|raise ticket|go ahead|proceed|it has|it is|this has|we have|we faced|we are facing|has been happening|have faced|for the past|past week|past month|since yesterday|since today)\b",
+        r"\b(?:i need help|please help|that is all|thank you|thanks|can you help|just create ticket|create ticket|log ticket|raise ticket|go ahead|proceed|i have to|i need to|at night|i do not feel safe|i don't feel safe|people keep|people are|it has|it is|this has|we have|we faced|we are facing|has been happening|have faced|for the past|past week|past month|since yesterday|since today)\b",
         cleaned,
         maxsplit=1,
         flags=re.IGNORECASE,
@@ -1594,6 +1629,13 @@ def _validate_location(location: str | None, *, transcript: str = "", memory: di
             "confidence": 0.1,
             "status": "needs_correction",
             "reason": "Caller indicated the location may be fake or a test address.",
+        }
+    if _is_underspecified_metro_route(lower):
+        return {
+            "normalized": normalized,
+            "confidence": 0.25,
+            "status": "needs_correction",
+            "reason": "Metro-to-home route is too broad. Ask for the metro station, road name, or nearest landmark.",
         }
 
     without_road_width = re.sub(r"\b\d+\s*feet\s+road\b", "feet road", lower)
@@ -1727,6 +1769,40 @@ def _is_major_ambiguous_location(lower: str) -> bool:
     return any(compact == item or compact.endswith(f" {item}") for item in _MAJOR_AMBIGUOUS_LOCATIONS)
 
 
+def _is_underspecified_metro_route(lower: str) -> bool:
+    compact = (lower or "").strip(" .,:;")
+    if not compact:
+        return False
+    route_terms = (
+        "the metro to my house",
+        "metro to my house",
+        "metro to my home",
+        "from the metro",
+        "from metro",
+    )
+    has_route = any(term in compact for term in route_terms)
+    has_named_station_or_road = any(
+        marker in compact
+        for marker in (
+            "station",
+            "road",
+            "street",
+            "cross",
+            "main",
+            "layout",
+            "indiranagar",
+            "whitefield",
+            "koramangala",
+            "jayanagar",
+            "hebbal",
+            "yelahanka",
+            "marathahalli",
+            "rajajinagar",
+        )
+    )
+    return has_route and not has_named_station_or_road
+
+
 def _is_non_location_phrase(text: str | None) -> bool:
     if not text:
         return True
@@ -1794,7 +1870,22 @@ def _detect_text_language(transcript: str) -> str:
 
 def _sentiment_from_text(transcript: str, acoustic_score: float) -> str:
     text = transcript.lower()
-    if any(term in text for term in ("scared", "fear", "afraid", "danger", "threat", "help now")):
+    if any(term in text for term in (
+        "scared",
+        "fear",
+        "afraid",
+        "danger",
+        "threat",
+        "help now",
+        "do not feel safe",
+        "don't feel safe",
+        "not feel safe",
+        "unsafe",
+        "shady area",
+        "people keep staring",
+        "staring at me",
+        "following me",
+    )):
         return "fear"
     if any(term in text for term in ("urgent", "immediately", "emergency", "right now", "bahut zaroori")):
         return "urgent"
@@ -1834,6 +1925,8 @@ def _is_specific_location(location: str | None) -> bool:
         return False
     lower = location.lower().strip(" .,:;")
     if lower in {"unknown", "not provided", "none", "n/a", "my house", "my home", "home", "house"}:
+        return False
+    if _is_underspecified_metro_route(lower):
         return False
     if any(home in lower for home in ("my house", "my home", "my place")) and not any(marker in lower for marker in _SPECIFIC_LOCATION_MARKERS):
         return False
@@ -1961,6 +2054,12 @@ def _build_conversational_restatement(
         return "This helpline is for genuine civic grievances. If you need help, please clearly state the issue and location."
 
     if session.required_slot in {"location", "landmark"}:
+        if memory.get("issue") == "streetlights" and memory.get("sentiment") == "fear":
+            if language == "hindi":
+                return "मैं समझ गई कि रास्ता असुरक्षित लग रहा है. मैं मदद करूंगी. किस मेट्रो स्टेशन, सड़क, या नजदीकी लैंडमार्क से टिकट बनाऊं?"
+            if language == "kannada":
+                return "ರಸ್ತೆ ಸುರಕ್ಷಿತವಾಗಿಲ್ಲ ಎಂದು ಅರ್ಥವಾಗಿದೆ. ನಾನು ಸಹಾಯ ಮಾಡುತ್ತೇನೆ. ಯಾವ ಮೆಟ್ರೋ ನಿಲ್ದಾಣ, ರಸ್ತೆ ಅಥವಾ ಹತ್ತಿರದ ಗುರುತನ್ನು ಟಿಕೆಟ್‌ನಲ್ಲಿ ಹಾಕಲಿ?"
+            return "I understand this feels unsafe. I will help raise this immediately. Which metro station, road name, or nearest landmark should I put on the ticket?"
         if language == "hindi":
             return "मैं आपकी समस्या समझ गई. मैं तुरंत टिकट बनाने में मदद करूंगी. टिकट में कौन सा क्षेत्र और नजदीकी लैंडमार्क डालूं?"
         if language == "kannada":

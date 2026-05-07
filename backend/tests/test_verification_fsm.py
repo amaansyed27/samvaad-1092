@@ -281,6 +281,29 @@ class TestHackathonGuardrails:
         assert "long service interruption" in data["priority_reason"]
         assert data["empathy_note"]
 
+    def test_unsafe_streetlight_route_asks_for_exact_location_first(self, session):
+        text = (
+            "There are no street lights on the road from the metro to my house. "
+            "I have to walk there at night. It's a very shady area and I do not feel safe. "
+            "People keep staring at me, please help."
+        )
+        data = _build_fast_analysis(session, text, 0.35)
+        memory = session.conversation_memory
+        session.analysis_result = AnalysisResult(**data)
+        message = _build_restatement(session)
+
+        assert data["department"] == "BBMP"
+        assert data["emergency_type"] == "streetlights"
+        assert data["priority"] == "HIGH"
+        assert data["sentiment"] == "fear"
+        assert data["requires_immediate_takeover"] is False
+        assert data["needs_clarification"] is True
+        assert session.required_slot == "landmark"
+        assert memory["ticket_ready"] is False
+        assert memory["location_validation_status"] == "needs_correction"
+        assert "staring" not in memory["landmark"].lower()
+        assert "metro station" in message
+
     def test_dummy_prank_call_gets_guardrail_warning(self, session):
         data = _build_fast_analysis(session, "this is a prank test call haha no issue", 0.1)
         assert data["abuse_action"] in {"WARN", "BLACKLIST_REVIEW"}
