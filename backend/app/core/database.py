@@ -15,7 +15,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import Column, DateTime, Float, Integer, String, Text, JSON, Boolean, ForeignKey
+from sqlalchemy import Column, DateTime, Float, Integer, String, Text, JSON, Boolean, ForeignKey, text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 
@@ -46,6 +46,8 @@ class CallRecord(Base):
     raw_transcript = Column(Text, default="")
     scrubbed_transcript = Column(Text, default="")
     restated_summary = Column(Text, default="")
+    conversation_transcript = Column(JSON, default=list)
+    conversation_memory = Column(JSON, default=dict)
 
     # Analysis
     emergency_type = Column(String(50), default="")
@@ -69,6 +71,7 @@ class CallRecord(Base):
     # Agent edits (learning signals)
     agent_edited = Column(Boolean, default=False)
     agent_corrections = Column(JSON, default=dict)  # {field: new_value}
+    learning_feedback_type = Column(String(30), default="")
 
     # Cascade log (which models were used)
     cascade_log = Column(JSON, default=list)
@@ -110,8 +113,23 @@ async def init_db() -> None:
 
     async with _engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await _ensure_call_record_columns(conn)
 
     logger.info("Database initialised: %s", settings.database_url)
+
+
+async def _ensure_call_record_columns(conn) -> None:
+    """Add demo-era columns to existing SQLite databases without data loss."""
+    result = await conn.execute(text("PRAGMA table_info(call_records)"))
+    existing = {row[1] for row in result.fetchall()}
+    columns = {
+        "conversation_transcript": "TEXT DEFAULT '[]'",
+        "conversation_memory": "TEXT DEFAULT '{}'",
+        "learning_feedback_type": "VARCHAR(30) DEFAULT ''",
+    }
+    for name, definition in columns.items():
+        if name not in existing:
+            await conn.execute(text(f"ALTER TABLE call_records ADD COLUMN {name} {definition}"))
 
 
 def get_session() -> AsyncSession:
@@ -141,6 +159,8 @@ async def save_call_record(session_data: dict[str, Any]) -> CallRecord:
         record.raw_transcript = session_data.get("raw_transcript", record.raw_transcript)
         record.scrubbed_transcript = session_data.get("scrubbed_transcript", record.scrubbed_transcript)
         record.restated_summary = session_data.get("restated_summary", record.restated_summary)
+        record.conversation_transcript = session_data.get("conversation_transcript", record.conversation_transcript)
+        record.conversation_memory = session_data.get("conversation_memory", record.conversation_memory)
         record.emergency_type = session_data.get("emergency_type", record.emergency_type)
         record.department_assigned = session_data.get("department_assigned", record.department_assigned)
         record.resolution_status = session_data.get("resolution_status", record.resolution_status)
@@ -157,6 +177,7 @@ async def save_call_record(session_data: dict[str, Any]) -> CallRecord:
             record.caller_confirmed = session_data.get("caller_confirmed")
         record.agent_edited = session_data.get("agent_edited", record.agent_edited)
         record.agent_corrections = session_data.get("agent_corrections", record.agent_corrections)
+        record.learning_feedback_type = session_data.get("learning_feedback_type", record.learning_feedback_type)
         record.cascade_log = session_data.get("cascade_log", record.cascade_log)
         record.pii_entities_count = session_data.get("pii_entities_count", record.pii_entities_count)
         
@@ -185,6 +206,7 @@ async def save_agent_edit(call_id: str, corrections: dict[str, Any]) -> bool:
 
         record.agent_edited = True
         record.agent_corrections = corrections
+        record.learning_feedback_type = corrections.get("feedback_type", "agent_edit")
         await db.commit()
         logger.info("Saved agent edits for call_id=%s: %s", call_id, list(corrections.keys()))
         return True
@@ -214,6 +236,8 @@ async def get_call_history(limit: int = 50) -> list[dict]:
                 "severity": r.severity,
                 "sentiment": r.sentiment,
                 "raw_transcript": r.raw_transcript,
+                "conversation_transcript": r.conversation_transcript,
+                "conversation_memory": r.conversation_memory,
                 "restated_summary": r.restated_summary,
                 "location_hint": r.location_hint,
                 "cultural_context": r.cultural_context,
@@ -223,6 +247,8 @@ async def get_call_history(limit: int = 50) -> list[dict]:
                 "distress_score": r.distress_score,
                 "caller_confirmed": r.caller_confirmed,
                 "agent_edited": r.agent_edited,
+                "agent_corrections": r.agent_corrections,
+                "learning_feedback_type": r.learning_feedback_type,
                 "completed_at": r.completed_at.isoformat() if r.completed_at else "",
             }
             for r in records
@@ -258,6 +284,9 @@ async def get_learning_signals(limit: int = 100) -> list[dict]:
                 "emergency_type": r.emergency_type,
                 "severity": r.severity,
                 "agent_corrections": r.agent_corrections,
+                "conversation_memory": r.conversation_memory,
+                "conversation_transcript": r.conversation_transcript,
+                "learning_feedback_type": r.learning_feedback_type,
                 "caller_confirmed": r.caller_confirmed,
             }
             for r in records

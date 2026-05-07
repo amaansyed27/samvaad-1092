@@ -51,12 +51,23 @@ class CallSession(BaseModel):
     """Root aggregate for one active 1092 call."""
 
     call_id: str = Field(default_factory=lambda: uuid.uuid4().hex[:12])
+    ticket_id: str = Field(default_factory=lambda: f"1092-{uuid.uuid4().hex[:6].upper()}")
     state: VerificationState = VerificationState.INIT
+    preferred_language_code: str = "unknown"
+    preferred_language_label: str = "auto"
     language_detected: str = "unknown"
     raw_transcript: str = ""
+    partial_transcript: str = ""
     scrubbed_transcript: str = ""
     restated_summary: str = ""
     caller_confirmed: bool | None = None
+    clarification_count: int = 0
+    required_slot: str = "issue"
+    call_slots: dict[str, Any] = Field(default_factory=dict)
+    conversation_memory: dict[str, Any] = Field(default_factory=dict)
+    conversation_transcript: list[dict[str, Any]] = Field(default_factory=list)
+    optional_detail_count: int = 0
+    latency_marks: dict[str, float] = Field(default_factory=dict)
     distress_score: float = 0.0
     distress_level: DistressLevel = DistressLevel.LOW
     sentiment: str = ""
@@ -93,6 +104,7 @@ class AnalysisResult(BaseModel):
     severity: str | None = None
     priority: str | None = None
     sentiment: str | None = None
+    language_detected: str | None = None
     key_details: list[str] = Field(default_factory=list)
     cultural_context: str | None = None
     semantic_distress_score: float = 0.0

@@ -18,6 +18,7 @@ Endpoints:
 from __future__ import annotations
 
 import logging
+from urllib.parse import parse_qs
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -94,10 +95,12 @@ async def list_sessions():
         "sessions": [
             {
                 "call_id": s.call_id,
+                "ticket_id": s.ticket_id,
                 "state": s.state,
                 "distress_score": s.distress_score,
                 "confidence": s.confidence,
                 "language": s.language_detected,
+                "preferred_language_code": s.preferred_language_code,
                 "started_at": s.started_at.isoformat(),
             }
             for s in sessions.values()
@@ -270,17 +273,44 @@ async def twilio_webhook(request: Request):
     Twilio Webhook: Returns TwiML XML instructing Twilio to connect
     the phone call to our WebSocket stream.
     """
-    # Extract the host dynamically from the request headers to support ngrok
+    xml = f"""<?xml version="1.0" encoding="UTF-8"?>
+    <Response>
+        <Gather input="dtmf" numDigits="1" timeout="7" action="/api/twiml/language" method="POST">
+            <Say voice="Polly.Aditi">Welcome to Karnataka 1 0 9 2. Press 1 for English. Kannadadalli sevege eradu ottiri. Hindi ke liye teen dabaye.</Say>
+        </Gather>
+        <Redirect method="POST">/api/twiml</Redirect>
+    </Response>"""
+    return HTMLResponse(content=xml, media_type="application/xml")
+
+
+@app.post("/api/twiml/language")
+async def twilio_language_webhook(request: Request):
+    """
+    Twilio IVR language selection. Digits are passed into the media stream
+    as custom parameters so STT and TTS can stay in the chosen language.
+    """
     host = request.headers.get("host")
     protocol = "wss" if "ngrok" in host or "https" in str(request.url) else "ws"
     ws_url = f"{protocol}://{host}/ws/twilio"
-    
+
+    body = (await request.body()).decode("utf-8")
+    form = parse_qs(body)
+    digit = (form.get("Digits") or ["1"])[0]
+    selection = {
+        "1": ("en-IN", "English", "English selected. Please describe your grievance after the tone."),
+        "2": ("kn-IN", "Kannada", "Kannada aayke madalagide. Dayavittu tone nantara nimma dooru heli."),
+        "3": ("hi-IN", "Hindi", "हिंदी चुनी गई है. कृपया टोन के बाद अपनी शिकायत बताइए."),
+    }.get(digit, ("en-IN", "English", "English selected. Please describe your grievance after the tone."))
+
     xml = f"""<?xml version="1.0" encoding="UTF-8"?>
     <Response>
-        <Say voice="Polly.Aditi">Welcome to the Karnataka 1 0 9 2 Helpline. Speak in English, Hindi mein boliye, or Kannada-dalli maathanaadi, after the tone.</Say>
+        <Say voice="Polly.Aditi">{selection[2]}</Say>
         <Play digits="0"></Play>
         <Connect>
-            <Stream url="{ws_url}" />
+            <Stream url="{ws_url}">
+                <Parameter name="preferred_language_code" value="{selection[0]}" />
+                <Parameter name="preferred_language_label" value="{selection[1]}" />
+            </Stream>
         </Connect>
     </Response>"""
     return HTMLResponse(content=xml, media_type="application/xml")

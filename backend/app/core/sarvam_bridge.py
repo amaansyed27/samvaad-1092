@@ -30,14 +30,25 @@ from __future__ import annotations
 import asyncio
 import base64
 import io
+import json
 import logging
 from typing import Any
+from urllib.parse import urlencode
 
 import httpx
+import websockets
+from websockets.exceptions import WebSocketException
 
 from app.config import settings
 
 logger = logging.getLogger("samvaad.sarvam_bridge")
+
+
+def _sarvam_headers() -> dict[str, str]:
+    return {
+        "api-subscription-key": settings.sarvam_api_key,
+        "Api-Subscription-Key": settings.sarvam_api_key,
+    }
 
 
 class SarvamSTT:
@@ -133,6 +144,102 @@ class SarvamSTT:
             logger.exception("Sarvam STT failed: %s", exc)
             return {"transcript": "", "language_code": "unknown", "language_prob": 0.0}
 
+    async def connect_stream(
+        self,
+        *,
+        language_code: str = "en-IN",
+        sample_rate: int = 16000,
+        high_vad_sensitivity: bool = True,
+    ) -> "SarvamSTTStream":
+        stream = SarvamSTTStream(
+            language_code=language_code if language_code != "unknown" else "en-IN",
+            model=self._model,
+            mode=self._mode or "transcribe",
+            sample_rate=sample_rate,
+            high_vad_sensitivity=high_vad_sensitivity,
+        )
+        await stream.connect()
+        return stream
+
+
+class SarvamSTTStream:
+    """Low-level Sarvam streaming STT WebSocket wrapper."""
+
+    def __init__(
+        self,
+        *,
+        language_code: str,
+        model: str,
+        mode: str,
+        sample_rate: int,
+        high_vad_sensitivity: bool,
+    ) -> None:
+        self.language_code = language_code
+        self.sample_rate = sample_rate
+        params = {
+            "language-code": language_code,
+            "model": model,
+            "mode": mode,
+            "sample_rate": str(sample_rate),
+            "input_audio_codec": "pcm_s16le",
+            "high_vad_sensitivity": str(high_vad_sensitivity).lower(),
+            "vad_signals": "true",
+            "flush_signal": "true",
+        }
+        self._url = f"wss://api.sarvam.ai/speech-to-text/ws?{urlencode(params)}"
+        self._ws = None
+
+    async def connect(self) -> None:
+        if not settings.sarvam_api_key:
+            raise RuntimeError("Sarvam API key not set")
+        self._ws = await websockets.connect(
+            self._url,
+            additional_headers=_sarvam_headers(),
+            ping_interval=20,
+            ping_timeout=20,
+            max_size=4 * 1024 * 1024,
+        )
+
+    async def send_pcm(self, pcm_bytes: bytes) -> None:
+        if self._ws is None:
+            raise RuntimeError("Sarvam STT stream is not connected")
+        payload = {
+            "audio": {
+                "data": base64.b64encode(pcm_bytes).decode("utf-8"),
+                "sample_rate": self.sample_rate,
+                "encoding": "pcm_s16le",
+            }
+        }
+        await self._ws.send(json.dumps(payload))
+
+    async def flush(self) -> None:
+        if self._ws is None:
+            return
+        for payload in ({"type": "flush"}, {"flush": True}):
+            try:
+                await self._ws.send(json.dumps(payload))
+                return
+            except WebSocketException:
+                raise
+            except Exception:
+                continue
+
+    async def recv(self) -> dict[str, Any]:
+        if self._ws is None:
+            raise RuntimeError("Sarvam STT stream is not connected")
+        raw = await self._ws.recv()
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8", errors="ignore")
+        try:
+            return json.loads(raw)
+        except Exception:
+            return {"type": "raw", "data": raw}
+
+    async def close(self) -> None:
+        if self._ws is not None:
+            await self._ws.close()
+            self._ws = None
+
 
 class SarvamTTS:
     """
@@ -165,7 +272,9 @@ class SarvamTTS:
         *,
         target_language: str | None = None,
         speaker: str | None = None,
-        pace: float = 1.0,
+        pace: float | None = None,
+        output_audio_codec: str | None = None,
+        speech_sample_rate: int | None = None,
     ) -> dict[str, Any]:
         """
         Convert text to speech via Sarvam Bulbul REST API.
@@ -193,13 +302,20 @@ class SarvamTTS:
 
         lang = target_language or self._language
         spk = speaker or self._speaker
+        speech_pace = pace if pace is not None else settings.sarvam_tts_pace
+        codec = output_audio_codec or "wav"
+        sample_rate = speech_sample_rate or settings.sarvam_tts_sample_rate
 
         payload = {
             "text": text[:2500],  # V3 limit
             "target_language_code": lang,
             "speaker": spk,
             "model": self._model,
-            "pace": pace,
+            "pace": speech_pace,
+            "temperature": settings.sarvam_tts_temperature,
+            "speech_sample_rate": sample_rate,
+            "output_audio_codec": codec,
+            "enable_preprocessing": True,
         }
 
         try:
@@ -227,8 +343,119 @@ class SarvamTTS:
             logger.exception("Sarvam TTS failed: %s", exc)
             return {"audio_base64": "", "request_id": ""}
 
+    async def stream_synthesise(
+        self,
+        text: str,
+        *,
+        target_language: str | None = None,
+        speaker: str | None = None,
+        pace: float | None = None,
+        output_audio_codec: str | None = None,
+        speech_sample_rate: int | None = None,
+    ):
+        """
+        Yield streaming TTS chunks. Falls back to REST if the WebSocket path fails.
+        Each yielded dict has audio_base64, content_type, codec, and sample_rate.
+        """
+        if not settings.sarvam_api_key:
+            logger.warning("Sarvam API key not set — no streaming audio")
+            return
+
+        lang = target_language or self._language
+        spk = speaker or self._speaker
+        speech_pace = pace if pace is not None else settings.sarvam_tts_pace
+        codec = output_audio_codec or settings.sarvam_tts_output_codec
+        sample_rate = speech_sample_rate or settings.sarvam_tts_sample_rate
+        normalized = _normalize_tts_text(text)
+
+        url = "wss://api.sarvam.ai/text-to-speech/ws?model=bulbul:v3&send_completion_event=true"
+        try:
+            async with websockets.connect(
+                url,
+                additional_headers=_sarvam_headers(),
+                ping_interval=20,
+                ping_timeout=20,
+                max_size=8 * 1024 * 1024,
+            ) as ws:
+                await ws.send(json.dumps({
+                    "type": "config",
+                    "data": {
+                        "speaker": spk,
+                        "target_language_code": lang,
+                        "pace": speech_pace,
+                        "temperature": settings.sarvam_tts_temperature,
+                        "min_buffer_size": 20,
+                        "max_chunk_length": 120,
+                        "speech_sample_rate": sample_rate,
+                        "output_audio_codec": codec,
+                    },
+                }))
+                await ws.send(json.dumps({"type": "text", "data": {"text": normalized}}))
+                await ws.send(json.dumps({"type": "flush"}))
+
+                async for raw in ws:
+                    if isinstance(raw, bytes):
+                        raw = raw.decode("utf-8", errors="ignore")
+                    try:
+                        message = json.loads(raw)
+                    except json.JSONDecodeError:
+                        continue
+
+                    if message.get("type") == "audio":
+                        data = message.get("data") or {}
+                        audio = data.get("audio") or data.get("chunk") or ""
+                        if audio:
+                            yield {
+                                "audio_base64": audio,
+                                "content_type": data.get("content_type") or _codec_content_type(codec),
+                                "codec": codec,
+                                "sample_rate": sample_rate,
+                            }
+                    elif message.get("type") == "event":
+                        event_data = message.get("data") or {}
+                        if event_data.get("event_type") == "final":
+                            break
+                    elif message.get("type") == "error":
+                        raise RuntimeError(str(message))
+        except Exception as exc:
+            logger.warning("Sarvam streaming TTS failed, falling back to REST: %s", exc)
+            fallback = await self.synthesise(
+                normalized,
+                target_language=lang,
+                speaker=spk,
+                pace=speech_pace,
+                output_audio_codec="wav",
+                speech_sample_rate=sample_rate,
+            )
+            if fallback.get("audio_base64"):
+                yield {
+                    "audio_base64": fallback["audio_base64"],
+                    "content_type": "audio/wav",
+                    "codec": "wav",
+                    "sample_rate": sample_rate,
+                }
+
 
 # ── Singletons ───────────────────────────────────────────────────────────────
+
+def _normalize_tts_text(text: str) -> str:
+    """Keep generated speech light and predictable for a call-centre voice."""
+    cleaned = " ".join(text.replace("\n", " ").split())
+    cleaned = cleaned.replace("1092-", "one zero nine two, ")
+    cleaned = cleaned.replace("1092", "one zero nine two")
+    return cleaned[:900]
+
+
+def _codec_content_type(codec: str) -> str:
+    return {
+        "pcm": "audio/pcm",
+        "mulaw": "audio/basic",
+        "wav": "audio/wav",
+        "mp3": "audio/mpeg",
+        "opus": "audio/opus",
+        "aac": "audio/aac",
+    }.get(codec, "application/octet-stream")
+
 
 _stt: SarvamSTT | None = None
 _tts: SarvamTTS | None = None

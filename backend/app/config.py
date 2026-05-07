@@ -40,8 +40,14 @@ class Settings(BaseSettings):
     sarvam_stt_model: str = "saaras:v3"
     sarvam_stt_mode: str = "transcribe"      # transcribe | translate | codemix
     sarvam_tts_model: str = "bulbul:v3"
-    sarvam_tts_speaker: str = "shubh"
+    sarvam_tts_speaker: str = "priya"
     sarvam_tts_language: str = "kn-IN"       # default to Kannada
+    sarvam_tts_pace: float = 1.12
+    sarvam_tts_temperature: float = 0.25
+    sarvam_tts_sample_rate: int = 24000
+    sarvam_tts_output_codec: str = "pcm"
+    sarvam_tts_fallback_speakers: str = "ritu,neha,kavya,shreya"
+    llm_provider_timeout_seconds: float = 6.0
 
     # ── Server ───────────────────────────────────────────────────────────
     host: str = "0.0.0.0"

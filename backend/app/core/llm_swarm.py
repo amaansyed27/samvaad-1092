@@ -323,11 +323,14 @@ class ProviderFactory:
 
             start = time.perf_counter()
             try:
-                result = await provider.generate(
-                    system_prompt,
-                    user_message,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
+                result = await asyncio.wait_for(
+                    provider.generate(
+                        system_prompt,
+                        user_message,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                    ),
+                    timeout=settings.llm_provider_timeout_seconds,
                 )
                 latency = (time.perf_counter() - start) * 1000
                 cascade_log.append(

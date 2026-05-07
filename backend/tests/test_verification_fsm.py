@@ -3,8 +3,16 @@ Tests for the Verification State Machine.
 """
 
 import pytest
-from app.core.verification_fsm import VerificationEngine, InvalidTransition
-from app.models import CallSession, VerificationState
+from app.core.verification_fsm import (
+    VerificationEngine,
+    InvalidTransition,
+    _build_fast_analysis,
+    _build_dispatch_message,
+    _build_restatement,
+    _detect_confirmation_intent,
+    _is_specific_location,
+)
+from app.models import AnalysisResult, CallSession, VerificationState
 
 
 @pytest.fixture
@@ -26,15 +34,17 @@ class TestStateTransitions:
         assert session.state == VerificationState.LISTEN.value
         assert result["event"] == "state_change"
 
-    def test_listen_to_scrub(self, engine, session):
+    @pytest.mark.asyncio
+    async def test_listen_to_scrub(self, engine, session):
         engine.start_listening(session)
-        result = engine.receive_transcript(session, "test transcript")
+        result = await engine.receive_transcript(session, "test transcript")
         assert session.state == VerificationState.SCRUB.value
         assert "test transcript" in session.raw_transcript
 
-    def test_scrub_to_analyze(self, engine, session):
+    @pytest.mark.asyncio
+    async def test_scrub_to_analyze(self, engine, session):
         engine.start_listening(session)
-        engine.receive_transcript(session, "My Aadhaar is 1234 5678 9012")
+        await engine.receive_transcript(session, "My Aadhaar is 1234 5678 9012")
         result = engine.scrub(session)
         assert session.state == VerificationState.ANALYZE.value
         assert "[AADHAAR_REDACTED]" in session.scrubbed_transcript
@@ -45,16 +55,18 @@ class TestStateTransitions:
         assert session.state == VerificationState.HUMAN_TAKEOVER.value
         assert result["event"] == "SAFE_HUMAN_TAKEOVER"
 
-    def test_confirm_verified(self, engine, session):
+    @pytest.mark.asyncio
+    async def test_confirm_verified(self, engine, session):
         # Manually set state to WAIT_FOR_CONFIRM for testing
         session.state = VerificationState.WAIT_FOR_CONFIRM.value
-        result = engine.confirm(session, confirmed=True)
+        result = await engine.confirm(session, confirmed=True)
         assert session.state == VerificationState.VERIFIED.value
         assert result["event"] == "VERIFIED"
 
-    def test_confirm_rejected_loops_back(self, engine, session):
+    @pytest.mark.asyncio
+    async def test_confirm_rejected_loops_back(self, engine, session):
         session.state = VerificationState.WAIT_FOR_CONFIRM.value
-        result = engine.confirm(session, confirmed=False)
+        result = await engine.confirm(session, confirmed=False)
         assert session.state == VerificationState.LISTEN.value
 
 
@@ -70,3 +82,140 @@ class TestInvalidTransitions:
         session.state = VerificationState.VERIFIED.value
         with pytest.raises(InvalidTransition):
             engine.start_listening(session)
+
+
+class TestHackathonGuardrails:
+    def test_location_guardrail_rejects_broad_area_accepts_landmark(self):
+        assert not _is_specific_location("Whitefield")
+        assert not _is_specific_location("Fourth district")
+        assert _is_specific_location("Whitefield near Vydehi hospital")
+        assert _is_specific_location("4th cross Indiranagar")
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("yes correct", True),
+            ("haan sahi hai", True),
+            ("haudu sari", True),
+            ("हाँ सही है", True),
+            ("ಹೌದು ಸರಿ", True),
+            ("no wrong", False),
+            ("nahi galat hai", False),
+            ("illa wrong", False),
+            ("नहीं गलत है", False),
+            ("ಇಲ್ಲ ತಪ್ಪು", False),
+        ],
+    )
+    def test_confirmation_classifier_multilingual(self, text, expected):
+        assert _detect_confirmation_intent(text) is expected
+
+    def test_confirmation_ignores_filler_with_extra_details(self):
+        assert _detect_confirmation_intent("ok my location is Whitefield") is None
+        assert _detect_confirmation_intent("no the location is near Vydehi hospital") is None
+
+    def test_vague_issue_requires_clarification_not_ticket_closure(self, session):
+        session.scrubbed_transcript = "I have a problem"
+        data = _build_fast_analysis(session, session.scrubbed_transcript, 0.1)
+        assert data["needs_clarification"] is True
+        assert session.required_slot in {"issue", "location"}
+
+    def test_power_cut_at_my_house_asks_for_location_detail(self, session):
+        session.scrubbed_transcript = "I am facing too many electrical cuts at my house"
+        data = _build_fast_analysis(session, session.scrubbed_transcript, 0.2)
+        assert data["department"] == "BESCOM"
+        assert data["emergency_type"] == "power_outage"
+        assert data["needs_clarification"] is True
+        assert session.required_slot == "landmark"
+
+    def test_ticket_closure_has_lookup_instruction_and_courtesy(self, session):
+        session.analysis_result = AnalysisResult(
+            department="BESCOM",
+            language_detected="english",
+            emergency_type="power_outage",
+        )
+        message = _build_dispatch_message(session)
+        assert session.ticket_id in message
+        assert "1092" in message
+        assert "Thank you" in message
+
+    def test_power_issue_deterministic_department_overrides_bad_ml_route(self, session):
+        session.department_assigned = "BBMP"
+        data = _build_fast_analysis(session, "I am facing too many electrical cuts at my house", 0.1)
+        assert data["department"] == "BESCOM"
+        assert session.conversation_memory["department"] == "BESCOM"
+
+    def test_warm_location_prompt_for_home_power_cut(self, session):
+        session.scrubbed_transcript = "I am facing too many electrical cuts at my house"
+        data = _build_fast_analysis(session, session.scrubbed_transcript, 0.2)
+        session.analysis_result = AnalysisResult(**data)
+        message = _build_restatement(session)
+        assert "I understand your problem" in message
+        assert "nearest landmark" in message
+
+    def test_specific_location_asks_optional_detail_before_confirmation(self, session):
+        session.scrubbed_transcript = "I am facing too many power cuts near Whitefield Vydehi hospital"
+        data = _build_fast_analysis(session, session.scrubbed_transcript, 0.2)
+        assert data["department"] == "BESCOM"
+        assert data["needs_clarification"] is True
+        assert session.required_slot == "started_at_or_time"
+        assert session.conversation_memory["ticket_ready"] is True
+
+    def test_just_create_ticket_skips_optional_questions(self, session):
+        session.conversation_memory = {
+            "issue": "power_outage",
+            "department": "BESCOM",
+            "area": "Whitefield",
+            "landmark": "Whitefield near Vydehi hospital",
+            "ticket_ready": True,
+        }
+        session.department_assigned = "BESCOM"
+        data = _build_fast_analysis(session, "Just create ticket", 0.2)
+        assert data["needs_clarification"] is False
+        assert session.required_slot == "confirmation"
+        assert session.conversation_memory["skip_optional"] is True
+
+    def test_previous_complaint_and_authority_details_saved(self, session):
+        session.conversation_memory = {
+            "issue": "power_outage",
+            "department": "BESCOM",
+            "area": "Whitefield",
+            "landmark": "Whitefield near Vydehi hospital",
+            "ticket_ready": True,
+        }
+        session.department_assigned = "BESCOM"
+        _build_fast_analysis(session, "I called BESCOM before, ticket 123", 0.2)
+        assert session.conversation_memory["authority_contacted"] == "BESCOM"
+        assert "ticket 123" in session.conversation_memory["previous_complaint"].lower()
+
+    def test_hindi_language_lock_uses_hindi_prompts(self, engine, session):
+        engine.set_language(session, "hi-IN")
+        session.conversation_memory = {
+            "issue": "power_outage",
+            "department": "BESCOM",
+            "area": "Whitefield",
+            "landmark": "Vydehi hospital",
+            "ticket_ready": True,
+        }
+        session.department_assigned = "BESCOM"
+        data = _build_fast_analysis(session, "Whitefield near Vydehi hospital", 0.2)
+        session.analysis_result = AnalysisResult(**data)
+        message = _build_restatement(session)
+        assert "कब शुरू हुआ" in message
+        assert "I can log" not in message
+
+    def test_kannada_language_lock_uses_kannada_confirmation(self, engine, session):
+        engine.set_language(session, "kn-IN")
+        session.conversation_memory = {
+            "issue": "power_outage",
+            "department": "BESCOM",
+            "area": "Whitefield",
+            "landmark": "Vydehi hospital",
+            "ticket_ready": True,
+            "skip_optional": True,
+        }
+        session.department_assigned = "BESCOM"
+        data = _build_fast_analysis(session, "just create ticket", 0.2)
+        session.analysis_result = AnalysisResult(**data)
+        message = _build_restatement(session)
+        assert "ನಾನು ದೃಢೀಕರಿಸುತ್ತೇನೆ" in message
+        assert "Let me confirm" not in message

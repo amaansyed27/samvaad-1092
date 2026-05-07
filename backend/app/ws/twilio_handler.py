@@ -12,8 +12,6 @@ import audioop
 import base64
 import json
 import logging
-from typing import Any
-
 from fastapi import WebSocket, WebSocketDisconnect
 
 from app.ws.call_handler import get_manager
@@ -27,6 +25,11 @@ class TwilioMediaStreamHandler:
         self.call_id: str | None = None
         self.manager = get_manager()
         self.session = None
+        self._speech_active = False
+        self._silence_chunks = 0
+        self._speech_chunks = 0
+        self._ratecv_state = None
+        self._pre_roll_frames: list[bytes] = []
 
     async def handle(self) -> None:
         await self.ws.accept()
@@ -53,6 +56,14 @@ class TwilioMediaStreamHandler:
                     
                     # Extract Twilio location data from the custom parameters
                     custom_params = data.get("start", {}).get("customParameters", {})
+                    language_code = custom_params.get("preferred_language_code", "unknown")
+                    if language_code != "unknown":
+                        await self.manager.handle_message(
+                            self.ws,
+                            self.session,
+                            json.dumps({"type": "language_select", "language_code": language_code}),
+                        )
+
                     location_data = {
                         "city": data.get("start", {}).get("fromCity") or custom_params.get("FromCity"),
                         "state": data.get("start", {}).get("fromState") or custom_params.get("FromState"),
@@ -84,52 +95,100 @@ class TwilioMediaStreamHandler:
                     pcm_8k = audioop.ulaw2lin(mulaw_bytes, 2)
                     
                     # 3. Resample 8kHz PCM to 16kHz PCM (for Sarvam/Librosa)
-                    pcm_16k, _ = audioop.ratecv(pcm_8k, 2, 1, 8000, 16000, None)
-                    
-                    # Initialize buffer and counters if not present
-                    if not hasattr(self, "_audio_buffer"):
-                        self._audio_buffer = bytearray()
-                        self._silence_chunks = 0
-                        
+                    pcm_16k, self._ratecv_state = audioop.ratecv(
+                        pcm_8k,
+                        2,
+                        1,
+                        8000,
+                        16000,
+                        self._ratecv_state,
+                    )
+
                     # Calculate RMS energy for VAD (Silence Gating)
                     rms = audioop.rms(pcm_16k, 2)
-                    
-                    # 150 is a common threshold for background noise vs speech
-                    is_speech = rms > 150
+                    assistant_speaking = bool(self.call_id and self.manager.is_assistant_speaking(self.call_id))
+                    speech_threshold = 120 if assistant_speaking else 22
+                    is_speech = rms > speech_threshold
+                    self._pre_roll_frames.append(pcm_16k)
+                    self._pre_roll_frames = self._pre_roll_frames[-5:]
 
-                    if is_speech:
-                        self._audio_buffer.extend(pcm_16k)
-                        self._silence_chunks = 0
-                    elif len(self._audio_buffer) > 0:
-                        self._audio_buffer.extend(pcm_16k)
-                        self._silence_chunks += 1
-                    
-                    # Flush buffer if we hit 0.5s of silence (25 chunks of 20ms) 
-                    # OR if the buffer gets too long (e.g., 4 seconds = 128000 bytes)
-                    should_flush = (self._silence_chunks >= 25 and len(self._audio_buffer) > 0) or len(self._audio_buffer) >= 128000
-                    
-                    if should_flush:
-                        import io
-                        import wave
-                        
-                        wav_io = io.BytesIO()
-                        with wave.open(wav_io, 'wb') as wav_file:
-                            wav_file.setnchannels(1)
-                            wav_file.setsampwidth(2) # 16-bit PCM
-                            wav_file.setframerate(16000)
-                            wav_file.writeframes(bytes(self._audio_buffer))
-                        
-                        wav_bytes = wav_io.getvalue()
-                        
+                    if is_speech and not self._speech_active:
+                        await self.manager._broadcast(self.call_id, {
+                            "event": "audio_activity",
+                            "source": "twilio",
+                            "status": "speech_started",
+                            "rms": rms,
+                        })
+                        for frame in self._pre_roll_frames[:-1]:
+                            await self.manager.handle_message(
+                                self.ws,
+                                self.session,
+                                json.dumps({
+                                    "type": "audio_frame",
+                                    "data": base64.b64encode(frame).decode("utf-8"),
+                                    "sample_rate": 16000,
+                                    "source": "twilio",
+                                    "barge_in": False,
+                                }),
+                            )
+
+                    if is_speech or self._speech_active:
                         msg = {
-                            "type": "audio",
-                            "data": base64.b64encode(wav_bytes).decode("utf-8")
+                            "type": "audio_frame",
+                            "data": base64.b64encode(pcm_16k).decode("utf-8"),
+                            "sample_rate": 16000,
+                            "source": "twilio",
+                            "rms": rms,
+                            "barge_in": bool(is_speech and rms >= 90),
                         }
                         await self.manager.handle_message(self.ws, self.session, json.dumps(msg))
-                        self._audio_buffer.clear()
+
+                    if is_speech:
+                        self._speech_active = True
                         self._silence_chunks = 0
+                        self._speech_chunks += 1
+
+                        # Demo latency guard: don't wait for a long natural pause on PSTN.
+                        if self._speech_chunks >= 70:
+                            await self.manager.handle_message(
+                                self.ws,
+                                self.session,
+                                json.dumps({"type": "audio_end", "sample_rate": 16000}),
+                            )
+                            await self.manager._broadcast(self.call_id, {
+                                "event": "audio_activity",
+                                "source": "twilio",
+                                "status": "speech_ended_max_window",
+                                "rms": rms,
+                            })
+                            self._speech_active = False
+                            self._silence_chunks = 0
+                            self._speech_chunks = 0
+                    elif self._speech_active:
+                        self._silence_chunks += 1
+                        if self._silence_chunks >= 8:
+                            await self.manager.handle_message(
+                                self.ws,
+                                self.session,
+                                json.dumps({"type": "audio_end", "sample_rate": 16000}),
+                            )
+                            await self.manager._broadcast(self.call_id, {
+                                "event": "audio_activity",
+                                "source": "twilio",
+                                "status": "speech_ended",
+                                "rms": rms,
+                            })
+                            self._speech_active = False
+                            self._silence_chunks = 0
+                            self._speech_chunks = 0
                     
                 elif event == "stop":
+                    if self.session and self._speech_active:
+                        await self.manager.handle_message(
+                            self.ws,
+                            self.session,
+                            json.dumps({"type": "audio_end", "sample_rate": 16000}),
+                        )
                     logger.info(f"Twilio Call Stopped: StreamSid={self.stream_sid}")
                     break
 
