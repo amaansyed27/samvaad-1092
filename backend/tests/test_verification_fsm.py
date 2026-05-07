@@ -262,6 +262,51 @@ class TestHackathonGuardrails:
         assert data["priority"] == "HIGH"
         assert data["requires_immediate_takeover"] is True
 
+    def test_structured_address_and_landmark_are_combined(self, session):
+        text = (
+            "Address: No. 45, 5th Cross, Indiranagar, Bengaluru, Karnataka 560038 "
+            "Landmark: Near Esplanade Apartments on 100 Feet Road."
+        )
+        data = _build_fast_analysis(session, f"Power cuts at my house. {text}", 0.2)
+        memory = session.conversation_memory
+        assert data["needs_clarification"] is True  # optional detail, not location correction
+        assert memory["ticket_ready"] is True
+        assert memory["area"] == "Indiranagar"
+        assert "No. 45" in memory["landmark"]
+        assert "Esplanade Apartments" in memory["landmark"]
+        assert memory["location_validation_status"] == "verified_format"
+        assert memory["location_confidence"] >= 0.9
+
+    @pytest.mark.parametrize(
+        "location",
+        [
+            "Airport",
+            "Kempegowda International Airport",
+            "Vidhan Sabha",
+            "Vidhana Soudha",
+        ],
+    )
+    def test_major_landmark_requires_more_location_detail(self, session, location):
+        data = _build_fast_analysis(session, f"Power cut at {location}", 0.2)
+        memory = session.conversation_memory
+        assert data["needs_clarification"] is True
+        assert session.required_slot == "landmark"
+        assert memory["ticket_ready"] is False
+        assert memory["location_validation_status"] == "needs_correction"
+        assert "too broad" in memory["location_validation_reason"].lower()
+
+    def test_fake_location_cue_requires_correction(self, session):
+        data = _build_fast_analysis(
+            session,
+            "Power cut at Whitefield near Vydehi hospital but this is a dummy location",
+            0.2,
+        )
+        memory = session.conversation_memory
+        assert data["needs_clarification"] is True
+        assert memory["ticket_ready"] is False
+        assert memory["location_validation_status"] == "needs_correction"
+        assert "fake" in memory["location_validation_reason"].lower()
+
     def test_hindi_language_lock_uses_hindi_prompts(self, engine, session):
         engine.set_language(session, "hi-IN")
         session.conversation_memory = {

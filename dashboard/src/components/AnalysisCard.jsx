@@ -213,8 +213,15 @@ export default function AnalysisCard({ analysis, mlRouting, sentiment, language,
               <MiniStat label="Required" value={slots.required_slot || 'issue'} />
               <MiniStat label="Specific" value={slots.location_specific ? 'yes' : 'no'} />
               <MiniStat label="Location" value={slots.location || 'pending'} />
+              <MiniStat label="Loc Check" value={slots.location_validation_status || 'missing'} />
+              <MiniStat label="Loc Conf" value={Number.isFinite(slots.location_confidence) ? `${Math.round(slots.location_confidence * 100)}%` : '--'} />
               <MiniStat label="Attempts" value={slots.clarification_count ?? 0} />
             </div>
+            {slots.location_validation_reason && (
+              <div className="mt-3 rounded border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-[10px] text-amber-100/80 leading-relaxed">
+                {slots.location_validation_reason}
+              </div>
+            )}
           </div>
         )}
 

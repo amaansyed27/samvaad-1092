@@ -154,6 +154,9 @@ _BROAD_LOCATION_TERMS = {
     "yelahanka",
     "marathahalli",
     "rajajinagar",
+    "airport",
+    "vidhana soudha",
+    "vidhan sabha",
 }
 
 _SPECIFIC_LOCATION_MARKERS = {
@@ -182,6 +185,32 @@ _SPECIFIC_LOCATION_MARKERS = {
     "apartment",
     "gate",
     "tower",
+    "address",
+    "no.",
+    "number",
+    "feet road",
+}
+
+_MAJOR_AMBIGUOUS_LOCATIONS = {
+    "airport",
+    "kempegowda airport",
+    "kempegowda international airport",
+    "vidhana soudha",
+    "vidhan sabha",
+    "vidhana sabha",
+    "majestic",
+    "railway station",
+    "bus stand",
+}
+
+_FAKE_LOCATION_CUES = {
+    "fake location",
+    "dummy location",
+    "not real location",
+    "random location",
+    "test address",
+    "imaginary",
+    "nowhere",
 }
 
 _YES_TOKENS = {
@@ -690,6 +719,10 @@ def _get_conversation_memory(session: CallSession) -> dict[str, Any]:
         "abuse_reason": "",
         "priority_reason": "",
         "empathy_note": "",
+        "normalized_location": "",
+        "location_confidence": 0.0,
+        "location_validation_status": "missing",
+        "location_validation_reason": "",
         "missing_slot": "issue",
         "last_question": "",
     }
@@ -730,6 +763,12 @@ def _update_conversation_memory(
             else:
                 memory["area"] = location_phrase
 
+    validation = _validate_location(memory.get("landmark") or memory.get("area"), transcript=text)
+    memory["normalized_location"] = validation["normalized"]
+    memory["location_confidence"] = validation["confidence"]
+    memory["location_validation_status"] = validation["status"]
+    memory["location_validation_reason"] = validation["reason"]
+
     memory["sentiment"] = sentiment
     memory["urgency"] = "HIGH" if sentiment in {"angry", "fear", "urgent", "frustrated"} else "LOW"
 
@@ -750,7 +789,10 @@ def _update_conversation_memory(
     if previous:
         memory["previous_complaint"] = previous
 
-    usable_location = bool(memory.get("landmark")) or _is_specific_location(memory.get("area"))
+    usable_location = (
+        (bool(memory.get("landmark")) or _is_specific_location(memory.get("area")))
+        and validation["status"] in {"usable", "verified_format"}
+    )
     memory["ticket_ready"] = bool(memory.get("issue") and memory.get("department") and usable_location)
     session.conversation_memory = memory
     return memory
@@ -777,6 +819,21 @@ def _next_optional_slot(memory: dict[str, Any]) -> str:
 
 def _area_from_location(location: str) -> str:
     lower = location.lower()
+    preferred_areas = (
+        "indiranagar",
+        "whitefield",
+        "koramangala",
+        "jayanagar",
+        "hebbal",
+        "yelahanka",
+        "marathahalli",
+        "rajajinagar",
+        "bangalore",
+        "bengaluru",
+    )
+    for area in preferred_areas:
+        if area in lower:
+            return area.title()
     for area in _BROAD_LOCATION_TERMS:
         if area in lower:
             return area.title()
@@ -891,7 +948,11 @@ def _build_fast_analysis(
     memory["abuse_action"] = abuse["action"]
     memory["abuse_reason"] = abuse["reason"]
     location = memory.get("landmark") or memory.get("area") or _extract_location_hint(transcript)
-    location_specific = bool(memory.get("landmark")) or _is_specific_location(location)
+    location_validation = _validate_location(location, transcript=transcript)
+    location_specific = (
+        (bool(memory.get("landmark")) or _is_specific_location(location))
+        and location_validation["status"] in {"usable", "verified_format"}
+    )
     needs_clarification = False
     key_details = _key_details_from_text(transcript, emergency_type, location)
 
@@ -911,6 +972,10 @@ def _build_fast_analysis(
         session.required_slot = "location"
         needs_clarification = True
         key_details.append("Needs caller location")
+    elif location_validation["status"] not in {"usable", "verified_format"}:
+        session.required_slot = "landmark"
+        needs_clarification = True
+        key_details.append(location_validation["reason"])
     elif not location_specific:
         session.required_slot = "landmark"
         needs_clarification = True
@@ -974,6 +1039,10 @@ def _build_slot_view(session: CallSession) -> dict[str, Any]:
         "caller_tried": memory.get("caller_tried", ""),
         "authority_contacted": memory.get("authority_contacted", ""),
         "previous_complaint": memory.get("previous_complaint", ""),
+        "normalized_location": memory.get("normalized_location", ""),
+        "location_confidence": memory.get("location_confidence", 0.0),
+        "location_validation_status": memory.get("location_validation_status", "missing"),
+        "location_validation_reason": memory.get("location_validation_reason", ""),
         "empathy_note": memory.get("empathy_note", ""),
         "priority_reason": memory.get("priority_reason", ""),
         "abuse_risk": memory.get("abuse_risk", "LOW"),
@@ -1250,6 +1319,9 @@ def _build_empathy_note(sentiment: str, priority: str, memory: dict[str, Any], a
 
 def _extract_location_hint(transcript: str) -> str:
     text = " ".join(transcript.split())
+    structured = _extract_structured_location(text)
+    if structured:
+        return structured
     lower = text.lower()
     best_index = -1
     best_candidate = ""
@@ -1264,6 +1336,32 @@ def _extract_location_hint(transcript: str) -> str:
     if best_candidate:
         return best_candidate
     return ""
+
+
+def _extract_structured_location(text: str) -> str:
+    address = _extract_label_value(text, ("address", "addr"))
+    landmark = _extract_label_value(text, ("landmark", "nearby landmark"))
+    if address and landmark:
+        if landmark.lower().startswith(("near ", "opposite ", "beside ", "behind ")):
+            return _clean_location_hint(f"{address}, {landmark}")
+        return _clean_location_hint(f"{address}, near {landmark}")
+    if address:
+        return _clean_location_hint(address)
+    if landmark:
+        return _clean_location_hint(landmark)
+    return ""
+
+
+def _extract_label_value(text: str, labels: tuple[str, ...]) -> str:
+    label_pattern = "|".join(re.escape(label) for label in labels)
+    match = re.search(
+        rf"\b(?:{label_pattern})\s*[:\-]\s*(.+?)(?=\b(?:address|addr|landmark|nearby landmark)\s*[:\-]|$)",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if not match:
+        return ""
+    return match.group(1).strip(" .,:;")
 
 
 def _clean_location_hint(location: str) -> str:
@@ -1293,6 +1391,91 @@ def _looks_like_location(location: str | None) -> bool:
         return True
     words = [word.strip(".,:;") for word in lower.split() if word.strip(".,:;")]
     return 1 <= len(words) <= 5 and any(word[:1].isupper() for word in location.split())
+
+
+def _validate_location(location: str | None, *, transcript: str = "") -> dict[str, Any]:
+    normalized = _normalize_location(location or "")
+    lower = normalized.lower()
+    transcript_lower = (transcript or "").lower()
+
+    if not normalized:
+        return {
+            "normalized": "",
+            "confidence": 0.0,
+            "status": "missing",
+            "reason": "Location is missing.",
+        }
+    if any(cue in transcript_lower for cue in _FAKE_LOCATION_CUES):
+        return {
+            "normalized": normalized,
+            "confidence": 0.1,
+            "status": "needs_correction",
+            "reason": "Caller indicated the location may be fake or a test address.",
+        }
+
+    has_address_number = bool(re.search(r"\b(?:no\.?\s*)?\d+[a-z]?\b", lower))
+    has_pin = bool(re.search(r"\b\d{6}\b", lower))
+    has_street = any(marker in lower for marker in ("cross", "road", "street", "main", "layout", "block", "phase", "stage", "feet road"))
+    has_area = any(area in lower for area in _BROAD_LOCATION_TERMS if area not in {"area", "city", "district", "airport", "vidhana soudha", "vidhan sabha"})
+    has_landmark_marker = any(marker in lower for marker in ("near", "opposite", "beside", "behind", "apartment", "hospital", "school", "temple", "metro", "gate", "tower"))
+    is_major_ambiguous = _is_major_ambiguous_location(lower)
+
+    if is_major_ambiguous and not (has_address_number or has_street or has_landmark_marker):
+        return {
+            "normalized": normalized,
+            "confidence": 0.3,
+            "status": "needs_correction",
+            "reason": "Major landmark is too broad. Ask for gate, terminal, road, ward, or nearest smaller landmark.",
+        }
+    if lower in {"my house", "my home", "home", "house", "my place"}:
+        return {
+            "normalized": normalized,
+            "confidence": 0.2,
+            "status": "needs_correction",
+            "reason": "Home location needs area and nearest landmark.",
+        }
+    if has_address_number and has_street and (has_area or has_pin or has_landmark_marker):
+        return {
+            "normalized": normalized,
+            "confidence": 0.92,
+            "status": "verified_format",
+            "reason": "Address has house/building number, street/cross, and area or landmark.",
+        }
+    if (has_street and has_area) or (has_area and has_landmark_marker) or (has_pin and has_street):
+        return {
+            "normalized": normalized,
+            "confidence": 0.78,
+            "status": "usable",
+            "reason": "Location has enough area and landmark detail for ticket intake.",
+        }
+    if has_area and not has_street and not has_landmark_marker:
+        return {
+            "normalized": normalized,
+            "confidence": 0.45,
+            "status": "needs_correction",
+            "reason": "Area is broad. Ask for street, ward, or nearest landmark.",
+        }
+    return {
+        "normalized": normalized,
+        "confidence": 0.5 if _is_specific_location(normalized) else 0.25,
+        "status": "usable" if _is_specific_location(normalized) else "needs_correction",
+        "reason": "Location appears usable." if _is_specific_location(normalized) else "Location is too broad or ambiguous.",
+    }
+
+
+def _normalize_location(location: str) -> str:
+    cleaned = " ".join((location or "").replace("Landmark:", " Landmark:").split()).strip(" .,:;")
+    cleaned = re.sub(r"\bNo\s+", "No. ", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\b(\d+)(st|nd|rd|th)\b", lambda m: f"{m.group(1)}{m.group(2).lower()}", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s*,\s*", ", ", cleaned)
+    return cleaned
+
+
+def _is_major_ambiguous_location(lower: str) -> bool:
+    compact = lower.strip(" .,:;")
+    if compact in _MAJOR_AMBIGUOUS_LOCATIONS:
+        return True
+    return any(compact == item or compact.endswith(f" {item}") for item in _MAJOR_AMBIGUOUS_LOCATIONS)
 
 
 def _is_non_location_phrase(text: str | None) -> bool:

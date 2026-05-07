@@ -207,6 +207,8 @@ function SlotLog({ slots }) {
     ['dept', slots.department],
     ['area', slots.area],
     ['landmark', slots.landmark],
+    ['loc_check', slots.location_validation_status],
+    ['loc_conf', Number.isFinite(slots.location_confidence) ? `${Math.round(slots.location_confidence * 100)}%` : ''],
     ['priority', slots.urgency],
     ['next', slots.required_slot],
   ].filter(([, value]) => value !== undefined && value !== null && value !== '');
