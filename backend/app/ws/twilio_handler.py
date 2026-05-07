@@ -153,10 +153,7 @@ class TwilioMediaStreamHandler:
                     self._pre_roll_frames = self._pre_roll_frames[-TWILIO_PREROLL_FRAMES:]
                     input_blocked = bool(
                         self.call_id
-                        and (
-                            self.manager.is_twilio_input_blocked(self.call_id)
-                            or self.manager.is_assistant_speaking(self.call_id)
-                        )
+                        and self.manager.is_twilio_input_blocked(self.call_id)
                     )
                     is_speech, self._candidate_chunks, self._blocked_speech_chunks, barge_in = _twilio_vad_decision(
                         rms=rms,

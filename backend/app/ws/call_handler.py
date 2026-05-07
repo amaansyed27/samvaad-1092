@@ -833,7 +833,7 @@ class ConnectionManager:
             existing.cancel()
             await self._broadcast(call_id, {"event": "playback_cancel"})
         if self.has_twilio_connection(call_id):
-            self._hold_twilio_input(call_id, 1.2)
+            self._hold_twilio_input(call_id, 2.8)
 
         async def run() -> None:
             tts_start = time.perf_counter()
@@ -842,29 +842,61 @@ class ConnectionManager:
             try:
                 if self.has_twilio_connection(call_id):
                     spoken_text = _twilio_spoken_text(text)
-                    chunk = await asyncio.wait_for(
-                        self._tts.synthesise(
-                            spoken_text,
-                            target_language=lang,
-                            output_audio_codec="wav",
-                            speech_sample_rate=24000,
-                        ),
-                        timeout=5.5,
-                    )
+                    try:
+                        chunk = await asyncio.wait_for(
+                            self._tts.synthesise(
+                                spoken_text,
+                                target_language=lang,
+                                output_audio_codec="mulaw",
+                                speech_sample_rate=8000,
+                            ),
+                            timeout=3.2,
+                        )
+                    except asyncio.TimeoutError:
+                        await self._broadcast(call_id, {
+                            "event": "tts_status",
+                            "status": "twilio_tts_timeout",
+                            "timeout_ms": 3200,
+                        })
+                        return
+                    if not chunk.get("audio_base64"):
+                        await self._broadcast(call_id, {
+                            "event": "tts_status",
+                            "status": "twilio_mulaw_empty_retry_wav",
+                        })
+                        try:
+                            chunk = await asyncio.wait_for(
+                                self._tts.synthesise(
+                                    spoken_text,
+                                    target_language=lang,
+                                    output_audio_codec="wav",
+                                    speech_sample_rate=24000,
+                                ),
+                                timeout=2.8,
+                            )
+                        except asyncio.TimeoutError:
+                            await self._broadcast(call_id, {
+                                "event": "tts_status",
+                                "status": "twilio_tts_retry_timeout",
+                                "timeout_ms": 2800,
+                            })
+                            return
                     if chunk.get("audio_base64"):
                         first_audio_ms = (time.perf_counter() - tts_start) * 1000
                         session.latency_marks["tts_first_audio_ms"] = first_audio_ms
                         first_audio_sent = True
+                        codec = "mulaw" if not _is_wav_audio(chunk["audio_base64"]) else "wav"
+                        sample_rate = 8000 if codec == "mulaw" else 24000
                         self._queue_twilio_audio_block(
                             call_id,
-                            _estimate_audio_seconds(chunk["audio_base64"], "wav", 24000),
+                            _estimate_audio_seconds(chunk["audio_base64"], codec, sample_rate),
                         )
                         await self._broadcast(call_id, {
                             "event": "assistant_audio_chunk",
                             "audio": chunk["audio_base64"],
-                            "codec": "wav",
-                            "sample_rate": 24000,
-                            "content_type": "audio/wav",
+                            "codec": codec,
+                            "sample_rate": sample_rate,
+                            "content_type": "audio/basic" if codec == "mulaw" else "audio/wav",
                         })
                     else:
                         await self._broadcast(call_id, {
@@ -1119,6 +1151,13 @@ def _estimate_audio_seconds(audio_b64: str, codec: str, sample_rate: int) -> flo
         return len(raw) / float(2 * (sample_rate or 24000))
     except Exception:
         return 0.0
+
+
+def _is_wav_audio(audio_b64: str) -> bool:
+    try:
+        return base64.b64decode(audio_b64[:16] + "==")[:4] == b"RIFF"
+    except Exception:
+        return False
 
 
 def _is_twilio_noise_transcript(session: CallSession, transcript: str) -> bool:
