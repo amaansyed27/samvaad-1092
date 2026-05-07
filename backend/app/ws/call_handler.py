@@ -334,7 +334,10 @@ class ConnectionManager:
         })
         await self._handle_audio(
             session,
-            {"data": base64.b64encode(_pcm16_to_wav(pcm, sample_rate)).decode("utf-8")},
+            {
+                "data": base64.b64encode(_pcm16_to_wav(pcm, sample_rate)).decode("utf-8"),
+                "source": msg.get("source"),
+            },
             call_id,
         )
 
@@ -460,9 +463,20 @@ class ConnectionManager:
         if not audio_b64:
             return
         audio_bytes = base64.b64decode(audio_b64)
+        is_twilio = msg.get("source") == "twilio" or self.has_twilio_connection(call_id)
 
         # Step 1: Acoustic Guardian (on-device, parallel)
-        distress_event = await self._engine.process_audio(session, audio_bytes)
+        if is_twilio:
+            distress_event = {
+                "event": "audio_processed",
+                "distress": {
+                    "score": session.distress_score or 0.0,
+                    "level": session.distress_level or "LOW",
+                    "features": {"source": "twilio_fast_path"},
+                },
+            }
+        else:
+            distress_event = await self._engine.process_audio(session, audio_bytes)
         await self._broadcast(call_id, distress_event)
 
         # If takeover was triggered by acoustic distress, stop here
@@ -632,7 +646,10 @@ class ConnectionManager:
             return
 
         # SCRUB (PII redaction)
-        event = self._engine.scrub(session)
+        if self.has_twilio_connection(call_id):
+            event = self._engine.scrub_fast(session)
+        else:
+            event = self._engine.scrub(session)
         await self._broadcast(call_id, event)
 
         # ANALYZE (LLM cascade)
@@ -802,6 +819,47 @@ class ConnectionManager:
             first_audio_sent = False
             lang = _tts_language(session)
             try:
+                if self.has_twilio_connection(call_id):
+                    chunk = await asyncio.wait_for(
+                        self._tts.synthesise(
+                            text,
+                            target_language=lang,
+                            output_audio_codec="wav",
+                            speech_sample_rate=24000,
+                        ),
+                        timeout=5.5,
+                    )
+                    if chunk.get("audio_base64"):
+                        first_audio_ms = (time.perf_counter() - tts_start) * 1000
+                        session.latency_marks["tts_first_audio_ms"] = first_audio_ms
+                        first_audio_sent = True
+                        self._queue_twilio_audio_block(
+                            call_id,
+                            _estimate_audio_seconds(chunk["audio_base64"], "wav", 24000),
+                        )
+                        await self._broadcast(call_id, {
+                            "event": "assistant_audio_chunk",
+                            "audio": chunk["audio_base64"],
+                            "codec": "wav",
+                            "sample_rate": 24000,
+                            "content_type": "audio/wav",
+                        })
+                    else:
+                        await self._broadcast(call_id, {
+                            "event": "tts_status",
+                            "status": "empty_audio",
+                            "path": "twilio_rest",
+                        })
+                    total_gap = _elapsed_ms(self._turn_started_at.pop(call_id, None))
+                    metrics = {
+                        **session.latency_marks,
+                        "total_turn_gap_ms": total_gap,
+                    }
+                    await self._broadcast(call_id, {"event": "latency_metrics", "metrics": metrics})
+                    if first_audio_sent:
+                        self._hold_twilio_input(call_id, 0.65)
+                    return
+
                 async for chunk in self._tts.stream_synthesise(
                     text,
                     target_language=lang,

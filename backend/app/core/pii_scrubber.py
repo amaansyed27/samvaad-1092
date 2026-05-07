@@ -230,6 +230,16 @@ class PIIScrubber:
         )
         return text, all_entities
 
+    def scrub_fast(self, text: str) -> tuple[str, list[PIIEntity]]:
+        """
+        Regex-only scrubber for live telephony turns.
+
+        This keeps the phone call responsive while still redacting structured
+        PII such as phone numbers, Aadhaar, PAN, email, IFSC, vehicles, and
+        account numbers before downstream processing.
+        """
+        return _regex_scrub(text)
+
 
 @lru_cache(maxsize=1)
 def get_scrubber() -> PIIScrubber:

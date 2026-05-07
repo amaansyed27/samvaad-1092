@@ -558,6 +558,26 @@ class VerificationEngine:
             "pii_count": len(entities),
         }
 
+    def scrub_fast(self, session: CallSession) -> dict:
+        """
+        Run regex-only PII scrubbing for live phone calls.
+
+        The full Indic NER layer is valuable for records and offline review, but
+        it can block a PSTN call long enough for the caller to hear silence.
+        """
+        clean, entities = self._scrubber.scrub_fast(session.raw_transcript)
+        latest_clean, _ = self._scrubber.scrub_fast(session.latest_transcript or "")
+        session.scrubbed_transcript = clean
+        session.latest_scrubbed_transcript = latest_clean
+        session.pii_entities_found = entities
+        self._transition(session, VerificationState.ANALYZE)
+        return {
+            "event": "state_change",
+            "state": "ANALYZE",
+            "pii_count": len(entities),
+            "fast_scrub": True,
+        }
+
     # ── Phase: ANALYZE → RESTATE ─────────────────────────────────────────
 
     async def analyse(self, session: CallSession) -> dict:
@@ -1226,7 +1246,16 @@ def _build_fast_analysis(
     """Deterministic call-centre analysis for the live demo path."""
     transcript = transcript or session.raw_transcript or ""
     deterministic_department = _infer_department(transcript)
-    if deterministic_department != "OTHER":
+    existing_department = session.conversation_memory.get("department") or session.department_assigned
+    detail_turn = (
+        session.required_slot not in {"issue", "service_detail", "correction"}
+        and existing_department
+        and existing_department not in {"UNASSIGNED", "UNKNOWN", "OTHER"}
+        and not _looks_like_new_grievance(transcript)
+    )
+    if detail_turn:
+        department = existing_department
+    elif deterministic_department != "OTHER":
         department = deterministic_department
     elif session.department_assigned and session.department_assigned not in {"UNASSIGNED", "UNKNOWN"}:
         department = session.department_assigned
@@ -1838,6 +1867,36 @@ def _has_public_service_context(transcript: str) -> bool:
             "revenue",
         )
     )
+
+
+def _looks_like_new_grievance(transcript: str) -> bool:
+    text = (transcript or "").lower()
+    strong_terms = (
+        "problem",
+        "issue",
+        "complaint",
+        "grievance",
+        "pending",
+        "not working",
+        "no water",
+        "water contaminated",
+        "contaminated water",
+        "power cut",
+        "power cuts",
+        "electricity cut",
+        "electrical cut",
+        "street light",
+        "street lights",
+        "garbage",
+        "waste",
+        "pothole",
+        "broken",
+        "unsafe",
+        "harassment",
+        "fire",
+        "smoke",
+    )
+    return any(term in text for term in strong_terms)
 
 
 def _has_streetlight_issue(text: str) -> bool:
