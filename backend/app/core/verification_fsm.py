@@ -882,12 +882,16 @@ def _update_conversation_memory(
     documents_available = _extract_documents_available(text)
     if documents_available:
         memory["documents_available"] = documents_available
+    if session.required_slot in _OPTIONAL_DETAIL_SLOTS and _is_unhelpful_optional_answer(text, session.required_slot):
+        memory["skip_optional"] = True
 
     should_update_location = (
         session.required_slot in {"issue", "location", "landmark", "location_confirm", "service_detail"}
         or bool(_extract_structured_location(text))
         or bool(_extract_location_hint(text))
     )
+    if session.required_slot not in {"issue", "location", "landmark", "location_confirm", "service_detail"} and _is_impact_or_time_detail(text):
+        should_update_location = False
     if should_update_location:
         location = _extract_location_hint(text)
         if location:
@@ -942,8 +946,15 @@ def _update_conversation_memory(
         memory["currently_happening"] = "yes"
     if any(term in lower for term in ("every night", "daily", "again and again", "many times", "repeated", "too many")):
         memory["frequency"] = _extract_frequency(text)
-    if any(term in lower for term in ("since", "morning", "evening", "night", "yesterday", "today", "week", "month")) and session.required_slot in {"issue", "started_at_or_time", "frequency", "location_confirm"}:
-        memory["started_at_or_time"] = _extract_time_detail(text)
+    if any(term in lower for term in ("since", "morning", "evening", "night", "yesterday", "today", "week", "month", "hour")) and session.required_slot in {"issue", "started_at_or_time", "frequency", "location_confirm", "confirmation"}:
+        time_detail = _extract_time_detail(text)
+        if time_detail:
+            existing_time = memory.get("started_at_or_time", "")
+            memory["started_at_or_time"] = (
+                f"{existing_time}; {time_detail}"
+                if existing_time and time_detail not in existing_time
+                else time_detail or existing_time
+            )
     if any(term in lower for term in ("tried", "checked", "called", "reported", "complained", "complaint")):
         memory["caller_tried"] = _extract_caller_tried(text)
     authority = _extract_authority_contact(lower)
@@ -1103,6 +1114,8 @@ def _extract_time_detail(text: str) -> str:
         r"(?:pending\s+)?for\s+\d+\s+(?:days?|weeks?|months?|years?)",
         r"past\s+[^,.]+",
         r"\b\d+\s+(?:continuous\s+)?cuts?\s+in\s+\d+\s+days?\b",
+        r"\b\d+\s*[- ]\s*hours?\s+(?:power\s+)?cuts?\b",
+        r"\b(?:power\s+)?cuts?\s+(?:for\s+)?\d+\s*[- ]\s*hours?\b",
         r"each\s+cut\s+(?:has\s+)?lasted\s+[^,.]+",
         r"every\s+(?:morning|evening|night|day)",
         r"(?:morning|evening|night|yesterday|today|last\s+week|this\s+week)",
@@ -1876,6 +1889,52 @@ def _has_public_service_context(transcript: str) -> bool:
     )
 
 
+def _is_impact_or_time_detail(text: str) -> bool:
+    lower = (text or "").lower()
+    return any(
+        cue in lower
+        for cue in (
+            "past",
+            "week",
+            "month",
+            "day",
+            "hour",
+            "hours",
+            "cut",
+            "cuts",
+            "lasting",
+            "lasted",
+            "occurring",
+            "happening",
+            "usually",
+        )
+    )
+
+
+def _is_unhelpful_optional_answer(text: str, slot: str) -> bool:
+    lower = " ".join((text or "").lower().strip(" .,!?:;").split())
+    if not lower:
+        return True
+    if lower in {"last stage", "the last stage"}:
+        return True
+    if slot == "started_at_or_time":
+        if _extract_time_detail(text) and not _looks_like_random_numeric_fragment(lower):
+            return False
+        return True
+    if slot in {"frequency", "caller_tried", "authority_contacted", "previous_complaint"}:
+        return len(lower.split()) <= 2 and _looks_like_random_numeric_fragment(lower)
+    return False
+
+
+def _looks_like_random_numeric_fragment(text: str) -> bool:
+    lower = (text or "").lower().strip(" .,!?:;")
+    if re.fullmatch(r"\d+(?:\s+(?:crore|lakh|thousand|hundred))?", lower):
+        return True
+    if lower in {"one crore", "hundred crore", "100 crore"}:
+        return True
+    return False
+
+
 def _looks_like_new_grievance(transcript: str) -> bool:
     text = (transcript or "").lower()
     strong_terms = (
@@ -2021,8 +2080,15 @@ def _score_priority(
     if any(term in text for term in ("past week", "for the past week", "many times", "again and again", "repeated", "continuous")):
         score += 0.18
         reasons.append("repeated or long-running issue")
-    if re.search(r"\b(?:over|more than|above)\s+\d+\s+hours?\b", text) or re.search(r"\b\d+\s+hours?\b", text):
-        score += 0.14
+    if memory.get("frequency") == "repeated" or memory.get("started_at_or_time"):
+        score += 0.12
+        reasons.append("repeated or long-running issue")
+    if (
+        re.search(r"\b(?:over|more than|above)\s+\d+\s+hours?\b", text)
+        or re.search(r"\b\d+\s+hours?\b", text)
+        or re.search(r"\b\d+\s*-\s*hours?\b", text)
+    ):
+        score += 0.24
         reasons.append("long service interruption")
     if re.search(r"\b\d+\s+(?:continuous\s+)?cuts?\b", text):
         score += 0.12
