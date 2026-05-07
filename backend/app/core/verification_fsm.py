@@ -270,13 +270,24 @@ _CORRECTION_CUES = {
 }
 
 _ABUSE_WARNING_SLOT = "abuse_warning"
-_REQUIRED_CLARIFICATION_SLOTS = {"issue", "location", "landmark", "location_confirm", "correction", _ABUSE_WARNING_SLOT}
+_REQUIRED_CLARIFICATION_SLOTS = {
+    "issue",
+    "location",
+    "landmark",
+    "location_confirm",
+    "service_detail",
+    "correction",
+    _ABUSE_WARNING_SLOT,
+}
 _OPTIONAL_DETAIL_SLOTS = (
     "started_at_or_time",
     "frequency",
+    "application_or_reference",
+    "office_visited",
     "caller_tried",
     "authority_contacted",
     "previous_complaint",
+    "documents_available",
 )
 _MAX_OPTIONAL_QUESTIONS = 2
 _SKIP_OPTIONAL_CUES = (
@@ -290,6 +301,48 @@ _SKIP_OPTIONAL_CUES = (
     "immediately",
     "right now",
 )
+
+_SERVICE_GRIEVANCE_DEPARTMENTS = {
+    "FOOD_CIVIL_SUPPLIES",
+    "LABOUR",
+    "SOCIAL_WELFARE",
+    "RDPR",
+    "HEALTH",
+    "TRANSPORT_RTO",
+    "EDUCATION",
+    "REVENUE",
+    "MUNICIPALITY_PANCHAYAT",
+}
+
+_SPECIALIZED_HELPLINES = {
+    "BESCOM": "1912",
+    "BWSSB": "1916",
+    "BBMP": "1533",
+    "HEALTH": "104",
+    "AMBULANCE": "102/108",
+    "WOMEN": "181",
+    "POLICE": "100",
+    "FIRE": "101",
+}
+
+_LINE_DEPARTMENT_NAMES = {
+    "BESCOM": "BESCOM",
+    "BWSSB": "BWSSB",
+    "BBMP": "BBMP ward/engineering office",
+    "POLICE": "Local police station",
+    "WOMEN": "Women and Child safety cell",
+    "AMBULANCE": "Emergency medical response",
+    "FIRE": "Fire and emergency services",
+    "FOOD_CIVIL_SUPPLIES": "Food and Civil Supplies department",
+    "LABOUR": "Labour department",
+    "SOCIAL_WELFARE": "Social Welfare department",
+    "RDPR": "Rural Development and Panchayat Raj",
+    "HEALTH": "Health and Family Welfare department",
+    "TRANSPORT_RTO": "Transport/RTO office",
+    "EDUCATION": "Education department",
+    "REVENUE": "Revenue department",
+    "MUNICIPALITY_PANCHAYAT": "Municipality/Panchayat office",
+}
 
 _PRANK_OR_DUMMY_TERMS = (
     "prank",
@@ -714,6 +767,14 @@ def _get_conversation_memory(session: CallSession) -> dict[str, Any]:
     defaults = {
         "issue": "",
         "department": "",
+        "request_type": "grievance",
+        "line_department": "",
+        "secondary_department": "",
+        "service_or_scheme": "",
+        "application_or_reference": "",
+        "office_visited": "",
+        "official_contacted": "",
+        "documents_available": "",
         "area": "",
         "landmark": "",
         "started_at_or_time": "",
@@ -731,6 +792,12 @@ def _get_conversation_memory(session: CallSession) -> dict[str, Any]:
         "abuse_reason": "",
         "priority_reason": "",
         "empathy_note": "",
+        "operator_hint": "",
+        "status_lookup": "Call 1092 and quote the ticket number.",
+        "emergency_referral": False,
+        "specialized_helpline": "",
+        "caller_safe_now": "",
+        "immediate_danger": False,
         "normalized_location": "",
         "location_confidence": 0.0,
         "location_validation_status": "missing",
@@ -767,22 +834,42 @@ def _update_conversation_memory(
         memory["issue"] = emergency_type
     if department and department not in {"UNASSIGNED", "UNKNOWN", "OTHER"}:
         memory["department"] = department
+        memory["line_department"] = _line_department_for(department, emergency_type)
 
-    location = _extract_location_hint(text)
-    if location:
-        if _looks_like_location(location) and _is_specific_location(location):
-            memory["landmark"] = _clean_stored_location(location)
-            memory["area"] = _area_from_location(location) or _area_from_location(text) or memory.get("area", "")
-        elif _looks_like_location(location) and location.lower().strip(" .,:;") not in {"my house", "my home", "home", "house"}:
-            memory["area"] = location
-    else:
-        location_phrase = _extract_standalone_location(text)
-        if location_phrase:
-            if _is_specific_location(location_phrase):
-                memory["landmark"] = _clean_stored_location(location_phrase)
-                memory["area"] = _area_from_location(location_phrase) or memory.get("area", "")
-            else:
-                memory["area"] = location_phrase
+    service_detail = _extract_service_or_scheme(text, department, emergency_type)
+    if service_detail:
+        memory["service_or_scheme"] = service_detail
+    application_reference = _extract_application_reference(text)
+    if application_reference:
+        memory["application_or_reference"] = application_reference
+    office_visited = _extract_office_visited(text)
+    if office_visited:
+        memory["office_visited"] = office_visited
+    documents_available = _extract_documents_available(text)
+    if documents_available:
+        memory["documents_available"] = documents_available
+
+    should_update_location = (
+        session.required_slot in {"issue", "location", "landmark", "location_confirm", "service_detail"}
+        or bool(_extract_structured_location(text))
+        or bool(_extract_location_hint(text))
+    )
+    if should_update_location:
+        location = _extract_location_hint(text)
+        if location:
+            if _looks_like_location(location) and _is_specific_location(location):
+                memory["landmark"] = _clean_stored_location(location)
+                memory["area"] = _area_from_location(location) or _area_from_location(text) or memory.get("area", "")
+            elif _looks_like_location(location) and location.lower().strip(" .,:;") not in {"my house", "my home", "home", "house"}:
+                memory["area"] = _clean_stored_location(location)
+        else:
+            location_phrase = _extract_standalone_location(text)
+            if location_phrase:
+                if _is_specific_location(location_phrase):
+                    memory["landmark"] = _clean_stored_location(location_phrase)
+                    memory["area"] = _area_from_location(location_phrase) or memory.get("area", "")
+                else:
+                    memory["area"] = location_phrase
 
     query_location = memory.get("landmark") or memory.get("area")
     candidates = resolve_location_candidates(
@@ -828,15 +915,23 @@ def _update_conversation_memory(
     authority = _extract_authority_contact(lower)
     if authority:
         memory["authority_contacted"] = authority
+        memory["official_contacted"] = authority
     previous = _extract_previous_complaint(text)
     if previous:
         memory["previous_complaint"] = previous
 
+    service_reference_ready = bool(memory.get("application_or_reference") or memory.get("service_or_scheme") or memory.get("office_visited"))
+    service_location_ready = bool(memory.get("area") or memory.get("landmark"))
     usable_location = (
         (bool(memory.get("landmark")) or _is_specific_location(memory.get("area")))
         and validation["status"] in {"usable", "verified_format", "map_confirmed", "pin_verified"}
     )
-    memory["ticket_ready"] = bool(memory.get("issue") and memory.get("department") and usable_location)
+    service_ready = department in _SERVICE_GRIEVANCE_DEPARTMENTS and service_location_ready and service_reference_ready
+    if service_ready and not usable_location:
+        memory["location_validation_status"] = "service_area"
+        memory["location_validation_reason"] = "Public-service grievance has enough district/area or office context for intake."
+        memory["location_confidence"] = max(float(memory.get("location_confidence") or 0.0), 0.7)
+    memory["ticket_ready"] = bool(memory.get("issue") and memory.get("department") and (usable_location or service_ready))
     session.conversation_memory = memory
     return memory
 
@@ -903,7 +998,25 @@ def _should_ask_optional_detail(session: CallSession, memory: dict[str, Any]) ->
 
 
 def _next_optional_slot(memory: dict[str, Any]) -> str:
+    service_department = memory.get("department") in _SERVICE_GRIEVANCE_DEPARTMENTS
+    if service_department:
+        service_order = (
+            "application_or_reference",
+            "office_visited",
+            "caller_tried",
+            "authority_contacted",
+            "previous_complaint",
+            "documents_available",
+            "started_at_or_time",
+            "frequency",
+        )
+        for slot in service_order:
+            if not memory.get(slot):
+                return slot
+        return ""
     for slot in _OPTIONAL_DETAIL_SLOTS:
+        if slot in {"application_or_reference", "office_visited", "documents_available"} and not service_department:
+            continue
         if not memory.get(slot):
             return slot
     return ""
@@ -1018,6 +1131,71 @@ def _extract_previous_complaint(text: str) -> str:
     return ""
 
 
+def _extract_application_reference(text: str) -> str:
+    match = re.search(
+        r"\b(?:application|ration card|pension|case|file|acknowledgement|acknowledgment|reference|ref|ticket|complaint)\s*(?:number|id|no|#)\s*[:#-]?\s*([A-Za-z0-9-]{3,})",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if match:
+        return match.group(0).strip(" .,:;")
+    return ""
+
+
+def _extract_service_or_scheme(text: str, department: str, emergency_type: str) -> str:
+    if department not in _SERVICE_GRIEVANCE_DEPARTMENTS:
+        return ""
+    lower = text.lower()
+    service_terms = (
+        ("ration card", "ration card"),
+        ("anna bhagya", "Anna Bhagya"),
+        ("pension", "pension"),
+        ("wages", "wages complaint"),
+        ("salary", "salary/wages complaint"),
+        ("labour office", "labour office"),
+        ("hospital", "government hospital service"),
+        ("medicine", "hospital medicine service"),
+        ("rto", "RTO service"),
+        ("driving license", "driving license"),
+        ("licence", "driving license"),
+        ("bus pass", "transport/bus pass service"),
+        ("scholarship", "scholarship"),
+        ("land record", "land record"),
+        ("rtc", "RTC/land record"),
+        ("khata", "khata/revenue service"),
+        ("income certificate", "income certificate"),
+        ("caste certificate", "caste certificate"),
+        ("mgnrega", "MGNREGA"),
+        ("nrega", "MGNREGA"),
+    )
+    for cue, label in service_terms:
+        if cue in lower:
+            return label
+    if department in _SERVICE_GRIEVANCE_DEPARTMENTS:
+        return _issue_label(emergency_type, "english")
+    return ""
+
+
+def _extract_office_visited(text: str) -> str:
+    match = re.search(
+        r"\b(?:visited|went to|called|contacted)\s+(?:the\s+)?([A-Za-z ]{3,40}?(?:office|hospital|rto|panchayat|station))\b",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if match:
+        return match.group(1).strip(" .,:;")
+    return ""
+
+
+def _extract_documents_available(text: str) -> str:
+    lower = text.lower()
+    if any(term in lower for term in ("photo", "photos", "document", "documents", "proof", "receipt", "sms")):
+        if any(term in lower for term in ("no photo", "no document", "don't have", "do not have")):
+            return "not available"
+        return "available"
+    return ""
+
+
 def _build_fast_analysis(
     session: CallSession,
     transcript: str,
@@ -1042,6 +1220,16 @@ def _build_fast_analysis(
     has_issue = has_issue or bool(memory.get("issue"))
     if department in {"OTHER", "UNKNOWN", "UNASSIGNED"} and memory.get("department"):
         department = memory["department"]
+    line_department = _line_department_for(department, emergency_type)
+    request_type = _infer_request_type(transcript, department, emergency_type, sentiment, abuse)
+    secondary_department = _infer_secondary_department(transcript, department, emergency_type)
+    specialized_helpline = _specialized_helpline_for(department, emergency_type, request_type, transcript)
+    memory["request_type"] = request_type
+    memory["line_department"] = line_department
+    memory["secondary_department"] = secondary_department
+    memory["specialized_helpline"] = specialized_helpline
+    memory["emergency_referral"] = request_type == "emergency_referral"
+    memory["status_lookup"] = "Use this 1092 ticket number to check status or quote it if a representative contacts you."
     memory["abuse_risk"] = abuse["risk"]
     memory["abuse_action"] = abuse["action"]
     memory["abuse_reason"] = abuse["reason"]
@@ -1051,17 +1239,54 @@ def _build_fast_analysis(
         (bool(memory.get("landmark")) or _is_specific_location(location))
         and location_validation["status"] in {"usable", "verified_format", "map_confirmed", "pin_verified"}
     )
+    service_department = department in _SERVICE_GRIEVANCE_DEPARTMENTS
+    service_reference_ready = bool(
+        memory.get("service_or_scheme") or memory.get("application_or_reference") or memory.get("office_visited")
+    )
+    service_area_ready = bool(memory.get("area") or memory.get("landmark"))
+    service_ticket_ready = service_department and service_area_ready and service_reference_ready
     needs_clarification = False
     key_details = _key_details_from_text(transcript, emergency_type, location)
+    if request_type == "emergency_referral" and specialized_helpline:
+        key_details.append(f"Emergency referral helpline: {specialized_helpline}")
+    if secondary_department:
+        key_details.append(f"Secondary department note: {secondary_department}")
 
     if abuse["action"] in {"WARN", "BLACKLIST_REVIEW"} and (not has_issue or department == "OTHER" or emergency_type == "other"):
         session.required_slot = _ABUSE_WARNING_SLOT
         needs_clarification = True
         key_details.append(f"Abuse/spam guardrail: {abuse['reason']}")
+    elif request_type == "emergency_referral":
+        session.required_slot = "confirmation"
+        needs_clarification = False
+        key_details.append("Immediate danger or specialized emergency support needed")
     elif not has_issue:
         session.required_slot = "issue"
         needs_clarification = True
         key_details.append("Needs grievance details")
+    elif department in {"OTHER", "UNKNOWN", "UNASSIGNED"} and not _has_public_service_context(transcript):
+        session.required_slot = "issue"
+        needs_clarification = True
+        key_details.append("Needs clearer grievance details")
+    elif department in {"OTHER", "UNKNOWN", "UNASSIGNED"}:
+        session.required_slot = "service_detail"
+        needs_clarification = True
+        key_details.append("Needs department, office, scheme, or service detail")
+    elif service_department and not service_reference_ready:
+        session.required_slot = "service_detail"
+        needs_clarification = True
+        key_details.append("Needs scheme, office, service, or application reference")
+    elif service_department and not service_area_ready:
+        session.required_slot = "location"
+        needs_clarification = True
+        key_details.append("Needs district, city, area, or office location")
+    elif service_ticket_ready:
+        memory["ticket_ready"] = True
+        if _should_ask_optional_detail(session, memory):
+            session.required_slot = _next_optional_slot(memory) or "confirmation"
+            needs_clarification = session.required_slot != "confirmation"
+        else:
+            session.required_slot = "confirmation"
     elif location.lower().strip(" .,:;") in {"my house", "my home", "home", "house"}:
         session.required_slot = "landmark"
         needs_clarification = True
@@ -1088,7 +1313,13 @@ def _build_fast_analysis(
     else:
         session.required_slot = "confirmation"
 
-    memory["ticket_ready"] = bool(has_issue and department not in {"OTHER", "UNKNOWN", "UNASSIGNED"} and location_specific)
+    fake_or_dummy_location = any(term in transcript.lower() for term in ("fake location", "dummy location"))
+    memory["ticket_ready"] = bool(
+        has_issue
+        and department not in {"OTHER", "UNKNOWN", "UNASSIGNED"}
+        and (location_specific or service_ticket_ready)
+        and not fake_or_dummy_location
+    )
     memory["missing_slot"] = session.required_slot if needs_clarification else ""
     session.conversation_memory = memory
 
@@ -1099,11 +1330,15 @@ def _build_fast_analysis(
     requires_takeover = priority_data["requires_takeover"]
     memory["priority_reason"] = priority_data["reason"]
     memory["empathy_note"] = _build_empathy_note(sentiment, priority, memory, abuse)
+    memory["operator_hint"] = _build_operator_hint(request_type, department, secondary_department, specialized_helpline, priority)
     session.conversation_memory = memory
 
     return {
+        "request_type": request_type,
         "emergency_type": emergency_type,
         "department": department,
+        "line_department": line_department,
+        "secondary_department": secondary_department,
         "location_hint": location,
         "severity": severity,
         "priority": priority,
@@ -1118,8 +1353,12 @@ def _build_fast_analysis(
         "abuse_score": abuse["score"],
         "abuse_action": abuse["action"],
         "abuse_reason": abuse["reason"],
+        "status_lookup": memory["status_lookup"],
+        "specialized_helpline": specialized_helpline,
+        "emergency_referral": memory["emergency_referral"],
+        "operator_hint": memory["operator_hint"],
         "needs_clarification": needs_clarification,
-        "requires_immediate_takeover": requires_takeover,
+        "requires_immediate_takeover": requires_takeover or request_type == "emergency_referral",
         "confidence": 0.74 if needs_clarification else 0.88,
     }
 
@@ -1129,8 +1368,20 @@ def _build_slot_view(session: CallSession) -> dict[str, Any]:
     memory = _get_conversation_memory(session)
     location = memory.get("landmark") or memory.get("area") or ((analysis.location_hint if analysis else "") or "")
     slots = {
+        "request_type": memory.get("request_type", "grievance"),
         "issue": memory.get("issue") or (analysis.emergency_type if analysis else ""),
         "department": memory.get("department") or (analysis.department if analysis else None) or session.department_assigned,
+        "line_department": memory.get("line_department") or (analysis.line_department if analysis else ""),
+        "secondary_department": memory.get("secondary_department") or (analysis.secondary_department if analysis else ""),
+        "service_or_scheme": memory.get("service_or_scheme", ""),
+        "application_or_reference": memory.get("application_or_reference", ""),
+        "office_visited": memory.get("office_visited", ""),
+        "official_contacted": memory.get("official_contacted", ""),
+        "documents_available": memory.get("documents_available", ""),
+        "emergency_referral": memory.get("emergency_referral", False),
+        "specialized_helpline": memory.get("specialized_helpline", ""),
+        "status_lookup": memory.get("status_lookup", ""),
+        "operator_hint": memory.get("operator_hint", ""),
         "location": location,
         "area": memory.get("area", ""),
         "location_specific": (
@@ -1181,6 +1432,34 @@ def _post_process_analysis(session: CallSession, data: dict[str, Any]) -> dict[s
     data["department"] = dept
 
     data["emergency_type"] = data.get("emergency_type") or _infer_emergency_type(transcript, dept)
+    data["request_type"] = data.get("request_type") or _infer_request_type(
+        transcript,
+        dept,
+        data["emergency_type"],
+        data.get("sentiment") or "confused",
+        {"action": "ALLOW"},
+    )
+    data["line_department"] = data.get("line_department") or _line_department_for(dept, data["emergency_type"])
+    data["secondary_department"] = data.get("secondary_department") or _infer_secondary_department(
+        transcript,
+        dept,
+        data["emergency_type"],
+    )
+    data["specialized_helpline"] = data.get("specialized_helpline") or _specialized_helpline_for(
+        dept,
+        data["emergency_type"],
+        data["request_type"],
+        transcript,
+    )
+    data["status_lookup"] = data.get("status_lookup") or "Use this 1092 ticket number to check status or quote it if a representative contacts you."
+    data["emergency_referral"] = bool(data.get("emergency_referral") or data["request_type"] == "emergency_referral")
+    data["operator_hint"] = data.get("operator_hint") or _build_operator_hint(
+        data["request_type"],
+        dept,
+        data["secondary_department"],
+        data["specialized_helpline"],
+        data.get("priority") or "MEDIUM",
+    )
     data["language_detected"] = _preferred_language(session, data.get("language_detected"))
     data["sentiment"] = data.get("sentiment") or "confused"
     data["priority"] = data.get("priority") or ("HIGH" if session.distress_score >= 0.7 else "MEDIUM")
@@ -1226,12 +1505,146 @@ def _preferred_language(session: CallSession, detected: str | None = None) -> st
     return "english"
 
 
+def _line_department_for(department: str, emergency_type: str | None = None) -> str:
+    if emergency_type == "streetlights":
+        return "BBMP streetlight/ward engineering team"
+    if emergency_type == "women_safety":
+        return "Women helpline and local police station"
+    return _LINE_DEPARTMENT_NAMES.get(department or "", department or "")
+
+
+def _infer_request_type(
+    transcript: str,
+    department: str,
+    emergency_type: str,
+    sentiment: str,
+    abuse: dict[str, Any],
+) -> str:
+    text = (transcript or "").lower()
+    if abuse.get("action") in {"WARN", "BLACKLIST_REVIEW"} and not _has_issue_signal(transcript, department, emergency_type):
+        return "spam_or_prank"
+    emergency_terms = (
+        "right now",
+        "immediate danger",
+        "following me",
+        "being followed",
+        "attacking",
+        "assault",
+        "fire",
+        "smoke",
+        "gas leak",
+        "ambulance",
+        "heart attack",
+        "unconscious",
+        "accident",
+        "child is sick",
+        "very sick",
+        "not safe now",
+    )
+    if department in {"POLICE", "WOMEN", "AMBULANCE", "FIRE"} and any(term in text for term in emergency_terms):
+        return "emergency_referral"
+    if sentiment in {"fear", "urgent"} and any(term in text for term in ("now", "right now", "danger", "scared", "unsafe")):
+        return "emergency_referral"
+    if any(term in text for term in ("how to", "where can i", "what is the process", "information", "enquiry", "enquiry")):
+        return "general_request"
+    return "grievance"
+
+
+def _infer_secondary_department(transcript: str, department: str, emergency_type: str) -> str:
+    text = (transcript or "").lower()
+    if department == "BWSSB" and any(term in text for term in ("sick", "ill", "vomit", "fever", "child", "hospital")):
+        return "HEALTH"
+    if emergency_type == "streetlights" and any(term in text for term in ("unsafe", "staring", "harassment", "following", "women", "girl")):
+        return "POLICE/WOMEN"
+    if department == "HEALTH" and any(term in text for term in ("ambulance", "critical", "emergency", "unconscious")):
+        return "AMBULANCE"
+    return ""
+
+
+def _specialized_helpline_for(department: str, emergency_type: str, request_type: str, transcript: str) -> str:
+    text = (transcript or "").lower()
+    if emergency_type == "streetlights":
+        return _SPECIALIZED_HELPLINES.get("BBMP", "")
+    if department == "HEALTH" and any(term in text for term in ("ambulance", "emergency", "unconscious", "accident")):
+        return _SPECIALIZED_HELPLINES["AMBULANCE"]
+    if request_type == "emergency_referral" and department in _SPECIALIZED_HELPLINES:
+        return _SPECIALIZED_HELPLINES[department]
+    if department in {"BESCOM", "BWSSB", "BBMP", "HEALTH", "WOMEN", "POLICE", "FIRE"}:
+        return _SPECIALIZED_HELPLINES.get(department, "")
+    return ""
+
+
+def _build_operator_hint(
+    request_type: str,
+    department: str,
+    secondary_department: str,
+    specialized_helpline: str,
+    priority: str,
+) -> str:
+    if request_type == "emergency_referral":
+        target = specialized_helpline or _LINE_DEPARTMENT_NAMES.get(department, "the emergency operator")
+        return f"Stop optional intake and connect/referral immediately. Route to {target}."
+    if request_type == "general_request":
+        return "Treat as public-service guidance first; capture department/service and only register if the caller wants a grievance."
+    if secondary_department:
+        return f"Register primary grievance, add cross-department note for {secondary_department}."
+    if priority in {"HIGH", "CRITICAL"}:
+        return "Keep the call short, reassure the caller, and avoid optional questions."
+    return "Register grievance with line department after explicit caller confirmation."
+
+
 def _infer_department(transcript: str) -> str:
     text = transcript.lower()
     if _has_streetlight_issue(text):
         return "BBMP"
     if any(term in text for term in (
         "power",
+        "bijli",
+        "electric",
+        "electrical",
+        "electricity",
+        "current",
+        "voltage",
+        "transformer",
+        "vidyut",
+        "vidyuth",
+        "vidyuta",
+        "à²µà²¿à²¦à³à²¯à³à²¤à³",
+        "karentu",
+        "current hogide",
+        "current illa",
+        "kadita",
+        "kaá¸ita",
+        "kaditavide",
+    )):
+        return "BESCOM"
+    if any(term in text for term in ("water", "paani", "neeru", "sewage", "drainage", "pipe", "cauvery", "contaminated")):
+        return "BWSSB"
+    if any(term in text for term in ("ambulance", "heart attack", "unconscious", "serious injury", "accident")):
+        return "AMBULANCE"
+    if any(term in text for term in ("women safety", "woman safety", "stalking", "molest", "domestic violence")):
+        return "WOMEN"
+    if any(term in text for term in ("ration", "ration card", "pds", "food grain", "fair price", "anna bhagya")):
+        return "FOOD_CIVIL_SUPPLIES"
+    if any(term in text for term in ("labour", "labor", "wages", "salary", "employer", "worker", "pf", "esi")):
+        return "LABOUR"
+    if any(term in text for term in ("pension", "old age", "widow pension", "disability pension", "social welfare")):
+        return "SOCIAL_WELFARE"
+    if any(term in text for term in ("panchayat", "village office", "grama", "rural", "mgnrega", "nrega")):
+        return "RDPR"
+    if any(term in text for term in ("hospital staff", "government hospital", "doctor", "medicine", "health service", "clinic", "phc", "refused medicine")):
+        return "HEALTH"
+    if any(term in text for term in ("rto", "driving license", "licence", "vehicle registration", "transport", "bus pass", "bmtc")):
+        return "TRANSPORT_RTO"
+    if any(term in text for term in ("school", "college", "teacher", "education", "scholarship")):
+        return "EDUCATION"
+    if any(term in text for term in ("land record", "rtc", "khata", "tahsildar", "taluk office", "revenue", "caste certificate", "income certificate")):
+        return "REVENUE"
+    if any(term in text for term in ("municipality", "municipal", "town panchayat", "city municipal")):
+        return "MUNICIPALITY_PANCHAYAT"
+    if any(term in text for term in (
+        "power",
+        "bijli",
         "electric",
         "electrical",
         "electricity",
@@ -1251,23 +1664,48 @@ def _infer_department(transcript: str) -> str:
         "kaditavide",
     )):
         return "BESCOM"
-    if any(term in text for term in ("water", "sewage", "drainage", "pipe", "cauvery")):
+    if any(term in text for term in ("water", "paani", "neeru", "sewage", "drainage", "pipe", "cauvery", "contaminated")):
         return "BWSSB"
     if any(term in text for term in ("garbage", "pothole", "road", "waste", "tree", "drain")):
         return "BBMP"
     if any(term in text for term in ("fire", "smoke", "gas leak", "blast")):
         return "FIRE"
-    if any(term in text for term in ("theft", "fight", "harassment", "following", "noise")):
+    if any(term in text for term in ("theft", "fight", "harassment", "following", "noise", "unsafe", "threat")):
         return "POLICE"
     return "OTHER"
 
 
 def _infer_emergency_type(transcript: str, department: str) -> str:
     text = transcript.lower()
+    if department == "FOOD_CIVIL_SUPPLIES":
+        return "ration_card"
+    if department == "LABOUR":
+        return "labour_grievance"
+    if department == "SOCIAL_WELFARE":
+        return "pension_delay"
+    if department == "RDPR":
+        return "rdpr_service"
+    if department == "HEALTH":
+        return "health_service"
+    if department == "TRANSPORT_RTO":
+        return "transport_service"
+    if department == "EDUCATION":
+        return "education_service"
+    if department == "REVENUE":
+        return "revenue_service"
+    if department == "MUNICIPALITY_PANCHAYAT":
+        return "municipal_service"
+    if department == "WOMEN":
+        return "women_safety"
+    if department == "AMBULANCE":
+        return "medical_emergency"
+    if department == "FIRE":
+        return "fire"
     if _has_streetlight_issue(text):
         return "streetlights"
     if any(term in text for term in (
         "power",
+        "bijli",
         "electric",
         "electrical",
         "electricity",
@@ -1296,6 +1734,8 @@ def _infer_emergency_type(transcript: str, department: str) -> str:
         return "waste_management"
     if department == "POLICE" and "noise" in text:
         return "noise_disturbance"
+    if department == "POLICE" and any(term in text for term in ("following", "harassment", "unsafe", "threat", "fight", "theft")):
+        return "public_safety"
     return "other"
 
 
@@ -1308,6 +1748,18 @@ def _has_issue_signal(transcript: str, department: str, emergency_type: str) -> 
         "issue",
         "complaint",
         "grievance",
+        "application",
+        "pending",
+        "ration",
+        "pension",
+        "wages",
+        "salary",
+        "hospital",
+        "medicine",
+        "rto",
+        "license",
+        "office",
+        "scheme",
         "help",
         "cut",
         "not working",
@@ -1336,6 +1788,34 @@ def _has_issue_signal(transcript: str, department: str, emergency_type: str) -> 
         "kaditavide",
     )
     return any(term in text for term in issue_terms)
+
+
+def _has_public_service_context(transcript: str) -> bool:
+    text = (transcript or "").lower()
+    return any(
+        term in text
+        for term in (
+            "department",
+            "office",
+            "scheme",
+            "service",
+            "application",
+            "ration",
+            "pension",
+            "labour",
+            "labor",
+            "wages",
+            "hospital",
+            "rto",
+            "transport",
+            "school",
+            "college",
+            "certificate",
+            "panchayat",
+            "municipality",
+            "revenue",
+        )
+    )
 
 
 def _has_streetlight_issue(text: str) -> bool:
@@ -1444,6 +1924,12 @@ def _score_priority(
     if any(term in text for term in ("do not feel safe", "don't feel safe", "not feel safe", "shady area", "people keep staring", "staring at me")):
         score += 0.25
         reasons.append("caller reports personal safety concern")
+    if any(term in text for term in ("refused medicine", "medicine denied", "hospital staff refused", "child is sick", "contaminated water", "dirty water")):
+        score += 0.32
+        reasons.append("health or vulnerable-person impact")
+    if any(term in text for term in ("wages pending", "salary pending", "not paid", "pension not received", "application pending")):
+        score += 0.12
+        reasons.append("service delay affecting citizen entitlement")
     if any(term in text for term in ("past week", "for the past week", "many times", "again and again", "repeated", "continuous")):
         score += 0.18
         reasons.append("repeated or long-running issue")
@@ -1459,6 +1945,9 @@ def _score_priority(
     if emergency_type in {"fire", "gas_leak"}:
         score += 0.5
         reasons.append("life-safety category")
+    if memory.get("request_type") == "emergency_referral":
+        score += 0.45
+        reasons.append("specialized emergency referral needed")
 
     score = min(score, 1.0)
     if score >= 0.72:
@@ -1489,8 +1978,9 @@ def _score_priority(
         "severity": severity,
         "priority": priority,
         "requires_takeover": (
-            emergency_type in {"fire", "gas_leak"}
+            emergency_type in {"fire", "gas_leak", "medical_emergency"}
             or any(term in text for term in immediate_takeover_terms)
+            or memory.get("request_type") == "emergency_referral"
             or (priority == "HIGH" and acoustic_score >= 0.85 and sentiment in {"fear", "urgent"})
         ),
         "reason": "; ".join(reasons) or "Routine civic intake based on current details.",
@@ -2003,6 +2493,19 @@ def _issue_label(emergency_type: str | None, language: str) -> str:
             "road_damage": "road damage",
             "streetlights": "streetlight",
             "noise_disturbance": "noise disturbance",
+            "ration_card": "ration card grievance",
+            "labour_grievance": "labour or wages grievance",
+            "pension_delay": "pension or welfare scheme delay",
+            "rdpr_service": "rural or panchayat service grievance",
+            "health_service": "health service grievance",
+            "transport_service": "transport or RTO grievance",
+            "education_service": "education service grievance",
+            "revenue_service": "revenue service grievance",
+            "municipal_service": "municipal service grievance",
+            "women_safety": "women safety concern",
+            "medical_emergency": "medical emergency",
+            "public_safety": "public safety concern",
+            "fire": "fire emergency",
             "other": "civic grievance",
         },
         "hindi": {
@@ -2053,7 +2556,22 @@ def _build_conversational_restatement(
             return "Ee helpline nija civic doorugalige. Sahaya bekaadare, dayavittu samasya mattu location annu spashtavagi heli."
         return "This helpline is for genuine civic grievances. If you need help, please clearly state the issue and location."
 
+    if session.required_slot == "service_detail":
+        if language == "hindi":
+            return "Samajh gayi. Yeh kis department, office, scheme, service, ya application ke baare mein hai?"
+        if language == "kannada":
+            return "Arthavayitu. Idu yava department, office, scheme, service, athava application bagge?"
+        if department in _SERVICE_GRIEVANCE_DEPARTMENTS:
+            return "I understand your grievance. Which scheme, office, service, or application number should I add to the ticket?"
+        return "I understand. Which department, office, scheme, or service is this about?"
+
     if session.required_slot in {"location", "landmark"}:
+        if memory.get("department") in _SERVICE_GRIEVANCE_DEPARTMENTS:
+            if language == "hindi":
+                return "Is grievance ke liye kaunsa district, area, ya office location daalun?"
+            if language == "kannada":
+                return "Ee grievance ge yava district, area, athava office location hakali?"
+            return "Which district, area, or office location should I put on this grievance?"
         if memory.get("issue") == "streetlights" and memory.get("sentiment") == "fear":
             if language == "hindi":
                 return "मैं समझ गई कि रास्ता असुरक्षित लग रहा है. मैं मदद करूंगी. किस मेट्रो स्टेशन, सड़क, या नजदीकी लैंडमार्क से टिकट बनाऊं?"
@@ -2099,6 +2617,12 @@ def _build_conversational_restatement(
         if language == "kannada":
             return "ಧನ್ಯವಾದಗಳು. ನಿಮ್ಮ ಬಳಿ ಹಿಂದಿನ ದೂರು ಅಥವಾ ಟಿಕೆಟ್ ಸಂಖ್ಯೆ ಇದೆಯೇ?"
         return "Thanks. Do you already have an earlier complaint or ticket number for this?"
+    if session.required_slot == "application_or_reference":
+        return "Do you have an application, scheme, ration card, pension, or reference number I should add?"
+    if session.required_slot == "office_visited":
+        return "Which office or official did you already visit or contact, if any?"
+    if session.required_slot == "documents_available":
+        return "Do you have any document, photo, receipt, or SMS proof available?"
 
     if session.required_slot == "confirmation":
         detail = ""
@@ -2121,7 +2645,9 @@ def _build_conversational_restatement(
         if language == "kannada":
             return f"ನಾನು ದೃಢೀಕರಿಸುತ್ತೇನೆ: {location} ನಲ್ಲಿ {issue}.{detail} ಇದನ್ನು {department} ಗೆ ಕಳುಹಿಸುತ್ತೇನೆ. ಇದು ಸರಿಯೇ?"
         prefix = "I understand this has been frustrating. " if memory.get("sentiment") in {"angry", "frustrated"} else ""
-        return f"{prefix}Let me confirm: {issue} at {location}.{detail} I will route this to {department}. Is that correct?"
+        line_department = memory.get("line_department") or _line_department_for(department, memory.get("issue"))
+        service_detail = f" for {memory['service_or_scheme']}" if memory.get("service_or_scheme") and memory["service_or_scheme"] not in issue else ""
+        return f"{prefix}Let me confirm: {issue}{service_detail} at {location}.{detail} I will register this with {line_department or department}. Is that correct?"
 
     return ""
 
@@ -2213,13 +2739,22 @@ def _build_confirmation_explanation(session: CallSession) -> str:
 def _build_dispatch_message(session: CallSession) -> str:
     analysis = session.analysis_result
     language = _preferred_language(session, analysis.language_detected if analysis else None)
-    department = (analysis.department if analysis else None) or session.department_assigned or "the concerned department"
+    memory = _get_conversation_memory(session)
+    department = (
+        memory.get("line_department")
+        or (analysis.line_department if analysis else None)
+        or (analysis.department if analysis else None)
+        or session.department_assigned
+        or "the concerned department"
+    )
+    helpline = memory.get("specialized_helpline") or (analysis.specialized_helpline if analysis else "")
+    helpline_note = f" For urgent direct support, you can also contact {helpline}." if helpline else ""
 
     if language == "hindi":
         return f"आपका टिकट {session.ticket_id} {department} के साथ दर्ज हो गया है. हम आगे की कार्रवाई के लिए इसे भेज रहे हैं. जरूरत पड़ी तो प्रतिनिधि इसी नंबर पर संपर्क करेगा. स्थिति जानने के लिए 1092 पर यही नंबर बताएं. धन्यवाद."
     if language == "kannada":
         return f"ನಿಮ್ಮ ಟಿಕೆಟ್ {session.ticket_id} {department} ಗೆ ದಾಖಲಾಗಿದೆ. ಮುಂದಿನ ಕ್ರಮಕ್ಕೆ ಕಳುಹಿಸುತ್ತಿದ್ದೇವೆ. ಹೆಚ್ಚಿನ ವಿವರ ಬೇಕಾದರೆ ಪ್ರತಿನಿಧಿ ಇದೇ ಸಂಖ್ಯೆಗೆ ಸಂಪರ್ಕಿಸುತ್ತಾರೆ. ಸ್ಥಿತಿ ತಿಳಿಯಲು 1092 ಗೆ ಕರೆ ಮಾಡಿ ಈ ಸಂಖ್ಯೆಯನ್ನು ಹೇಳಿ. ಧನ್ಯವಾದಗಳು."
-    return f"Your ticket {session.ticket_id} has been logged with {department}. We will send it for action, and if more details are needed, a representative will contact you on this same number. You can check status by calling 1092 and quoting this ticket ID. The ticket details have also been sent by SMS. Thank you for calling Karnataka 1092."
+    return f"Your grievance has been registered with {department}. Your ticket number is {session.ticket_id}. We will send it to the concerned line official for action, and if more details are needed, a representative will contact you on this same number. Use this ticket number to check status or quote it if a representative contacts you.{helpline_note} The ticket details have also been sent by SMS. Thank you for calling Karnataka 1092."
 
 
 def _build_human_takeover_message(session: CallSession, reason: str) -> str:

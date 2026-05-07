@@ -642,12 +642,18 @@ class ConnectionManager:
             await self._broadcast(call_id, {
                 "event": "classification_update",
                 "analysis": event["analysis"],
+                "request_type": event["analysis"].get("request_type"),
                 "department": event["analysis"].get("department"),
+                "line_department": event["analysis"].get("line_department"),
+                "secondary_department": event["analysis"].get("secondary_department"),
                 "emergency_type": event["analysis"].get("emergency_type"),
                 "priority": event["analysis"].get("priority"),
                 "severity": event["analysis"].get("severity"),
                 "priority_reason": event["analysis"].get("priority_reason"),
                 "empathy_note": event["analysis"].get("empathy_note"),
+                "specialized_helpline": event["analysis"].get("specialized_helpline"),
+                "emergency_referral": event["analysis"].get("emergency_referral"),
+                "operator_hint": event["analysis"].get("operator_hint"),
                 "confidence": event.get("confidence"),
             })
             if event["analysis"].get("abuse_action") and event["analysis"].get("abuse_action") != "ALLOW":

@@ -311,6 +311,88 @@ class TestHackathonGuardrails:
         assert session.required_slot == "abuse_warning"
         assert "prank" in data["abuse_reason"]
 
+    def test_ration_card_routes_to_food_civil_supplies(self, session):
+        data = _build_fast_analysis(
+            session,
+            "My ration card application is pending for two months in Mysuru",
+            0.2,
+        )
+        memory = session.conversation_memory
+        assert data["request_type"] == "grievance"
+        assert data["department"] == "FOOD_CIVIL_SUPPLIES"
+        assert data["line_department"] == "Food and Civil Supplies department"
+        assert data["emergency_type"] == "ration_card"
+        assert memory["service_or_scheme"] == "ration card"
+        assert memory["area"] == "Mysuru"
+
+    def test_labour_wages_routes_to_labour_department(self, session):
+        data = _build_fast_analysis(
+            session,
+            "The labour office is not responding about unpaid wages in Peenya",
+            0.2,
+        )
+        assert data["department"] == "LABOUR"
+        assert data["emergency_type"] == "labour_grievance"
+        assert session.conversation_memory["service_or_scheme"] in {"wages complaint", "labour office"}
+
+    def test_health_service_priority_for_refused_medicine(self, session):
+        data = _build_fast_analysis(
+            session,
+            "Government hospital staff refused medicine for my child in Jayanagar",
+            0.2,
+        )
+        assert data["department"] == "HEALTH"
+        assert data["emergency_type"] == "health_service"
+        assert data["specialized_helpline"] == "104"
+        assert data["priority"] in {"MEDIUM", "HIGH"}
+        assert "health" in data["priority_reason"].lower()
+
+    def test_pension_delay_routes_to_social_welfare(self, session):
+        data = _build_fast_analysis(
+            session,
+            "My old age pension has not been received for three months in Tumakuru",
+            0.2,
+        )
+        assert data["department"] == "SOCIAL_WELFARE"
+        assert data["emergency_type"] == "pension_delay"
+        assert data["request_type"] == "grievance"
+
+    def test_someone_following_now_triggers_emergency_referral(self, session):
+        data = _build_fast_analysis(
+            session,
+            "Someone is following me right now near Majestic bus stop",
+            0.4,
+        )
+        assert data["request_type"] == "emergency_referral"
+        assert data["department"] == "POLICE"
+        assert data["specialized_helpline"] == "100"
+        assert data["requires_immediate_takeover"] is True
+
+    def test_contaminated_water_with_sick_child_adds_health_note(self, session):
+        data = _build_fast_analysis(
+            session,
+            "Water is contaminated near Whitefield and my child is sick",
+            0.3,
+        )
+        assert data["department"] == "BWSSB"
+        assert data["secondary_department"] == "HEALTH"
+        assert data["priority"] in {"MEDIUM", "HIGH"}
+
+    @pytest.mark.parametrize(
+        ("text", "department"),
+        [
+            ("bijli cut near Whitefield", "BESCOM"),
+            ("paani contamination in Indiranagar", "BWSSB"),
+            ("neeru problem in Jayanagar", "BWSSB"),
+            ("ration card pending in Mysuru", "FOOD_CIVIL_SUPPLIES"),
+            ("pension not received in Hubballi", "SOCIAL_WELFARE"),
+            ("hospital refused medicine in Jayanagar", "HEALTH"),
+        ],
+    )
+    def test_public_service_code_mix_terms_route(self, session, text, department):
+        data = _build_fast_analysis(session, text, 0.2)
+        assert data["department"] == department
+
     def test_takeover_event_includes_spoken_handoff(self, engine, session):
         event = engine.force_takeover(session, "High urgency or distress detected")
         assert event["event"] == "SAFE_HUMAN_TAKEOVER"

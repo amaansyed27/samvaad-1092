@@ -98,8 +98,11 @@ class PIIEntity(BaseModel):
 class AnalysisResult(BaseModel):
     """Output of the LLM ANALYZE phase."""
 
+    request_type: str | None = None
     emergency_type: str | None = None
     department: str | None = None
+    line_department: str | None = None
+    secondary_department: str | None = None
     location_hint: str | None = None
     severity: str | None = None
     priority: str | None = None
@@ -114,6 +117,10 @@ class AnalysisResult(BaseModel):
     abuse_score: float = 0.0
     abuse_action: str | None = None
     abuse_reason: str | None = None
+    status_lookup: str | None = None
+    specialized_helpline: str | None = None
+    emergency_referral: bool = False
+    operator_hint: str | None = None
     needs_clarification: bool = False
     requires_immediate_takeover: bool = False
     confidence: float = 0.0
