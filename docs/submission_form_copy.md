@@ -124,43 +124,54 @@ Use PNG/JPG under 3 MB each:
 
 ## 5-Minute Video Script
 
-1. Opening, 20 seconds:
-   - "This is Samvaad 1092, a voice-to-voice AI assistive layer for Karnataka public grievance calls."
-   - "The core problem is wrong understanding before response."
+Target pace: speak naturally, but keep the demos moving. If the screen is slow, skip one follow-up and show the dashboard result.
 
-2. Stack and architecture, 45 seconds:
-   - "The backend is FastAPI with WebSockets and a deterministic verification FSM."
-   - "The dashboard is React/Vite and shows transcript, routing, sentiment, priority, slots, and Civic Inbox."
-   - "Sarvam handles Indian-language STT and TTS. Twilio is used as the hackathon phone simulation; in production this can map to Exotel or another government telephony provider."
-   - "The ML layer includes local routing/classification, priority prediction from described impact, acoustic distress, spam guardrails, and active learning from agent corrections."
+1. Opening, 25 seconds:
+   - "Hello, I am Amaan Syed from RedLine, and this is Samvaad 1092."
+   - "Samvaad is a voice-to-voice AI intake layer for Karnataka public grievance calls."
+   - "The goal is not only verified understanding. It also reduces call-center load by automating first-level intake: listening, routing, collecting key details, verifying, and creating a ticket before a human operator is needed."
 
-3. Demo 1: Power cuts, 70 seconds:
-   - Caller line: "I am facing too many electrical cuts at my house near Esplanade Apartments on 100 Feet Road, Indiranagar."
-   - Follow-up: "It has been happening for the past two weeks. In the last three days we had seven cuts, and one lasted over three hours."
-   - Show: transcript, BESCOM routing, priority from repeated/long outage, clean location, verification, ticket.
+2. Problem and solution, 35 seconds:
+   - "In grievance calls, the biggest failure is a wrong response caused by wrong understanding."
+   - "Citizens may speak in Kannada, Hindi, English, code-mix, local landmarks, or emotional language."
+   - "Samvaad listens, extracts the issue, department, location, urgency, and service details, then verifies everything aloud before registering the grievance."
 
-4. Demo 2: Ration card, 55 seconds:
-   - Caller line: "My ration card application is pending for two months in Mysuru."
-   - Follow-up: "It is linked with the same mobile number."
-   - Show: Food and Civil Supplies routing, Janaspandana-style service fields, mobile reference, clean confirmation.
+3. Stack and guardrails, 45 seconds:
+   - "The backend is FastAPI with WebSockets, SQLite, Pydantic models, and a deterministic verification state machine."
+   - "The dashboard is React and Vite, showing the live transcript, classification, priority, slots, Civic Inbox, and learning signals."
+   - "Sarvam handles Indian-language speech-to-text and text-to-speech. Twilio is used for the phone demo because it gives trial numbers; in production this can map to Exotel or a government telephony provider."
+   - "The ML layer includes department classification, priority prediction from the caller's actual impact, distress detection, active learning from agent corrections, and spam or prank-call detection. Fake, abusive, or dummy calls can be warned, blocked, or routed to a human instead of wasting operator time."
 
-5. Demo 3: Streetlights and safety, 55 seconds:
-   - Caller line: "There are no street lights on the road from the metro to my house. I have to walk there at night. It is a very shady area and I do not feel safe."
-   - Follow-up if asked: "It is from Indiranagar metro station towards 5th Cross, near Esplanade Apartments."
-   - Show: BBMP streetlight routing, safety context, high priority, exact-location question, empathy.
+4. Demo setup, 10 seconds:
+   - "Now I will switch to the dashboard and phone window. I will show four fast calls: power cuts, ration card delay, streetlight safety, and contaminated water."
 
-6. Demo 4: Health cross-department, 50 seconds:
-   - Caller line: "Water is contaminated near Whitefield and my child is sick after drinking it."
-   - Follow-up: "It is near Vydehi Hospital, Whitefield."
-   - Show: BWSSB primary routing, Health secondary note, elevated priority, human/operator awareness.
+5. Demo 1: Power cuts, 55 seconds:
+   - Say: "I am facing too many electrical cuts at my house near Esplanade Apartments on 100 Feet Road, Indiranagar."
+   - If asked: "It has been happening for two weeks. In the last three days we had seven cuts, and one lasted over three hours."
+   - Point out: "It routes to BESCOM, raises priority because the outage is repeated and long, cleans the location, verifies, and creates a ticket."
 
-7. Civic Inbox, 35 seconds:
-   - Show stored conversation, extracted fields, learning signal.
-   - Show full transcript and structured memory.
+6. Demo 2: Ration card, 45 seconds:
+   - Say: "My ration card application is pending for two months in Mysuru."
+   - If asked: "It is linked with the same mobile number."
+   - Point out: "This is no longer just BBMP or BESCOM. It routes to Food and Civil Supplies, captures Janaspandana-style service fields, and verifies before logging."
 
-8. Closing, 25 seconds:
-   - "This improves language access, verified understanding, safe escalation, and government deployability."
-   - "The final deployment path is Google Cloud with secure secrets, storage, and scalable call processing."
+7. Demo 3: Streetlight safety, 50 seconds:
+   - Say: "There are no street lights on the road from the metro to my house. I walk there at night and I do not feel safe."
+   - If asked: "It is from Indiranagar metro station towards 5th Cross, near Esplanade Apartments."
+   - Point out: "The system treats this as streetlights plus safety context, asks for exact route or landmark, and escalates priority instead of treating it as a routine road issue."
+
+8. Demo 4: Contaminated water and child health, 45 seconds:
+   - Say: "Water is contaminated near Whitefield and my child is sick after drinking it."
+   - If asked: "It is near Vydehi Hospital, Whitefield."
+   - Point out: "It routes BWSSB as primary, marks Health as a secondary concern, raises urgency, and can trigger operator attention."
+
+9. Civic Inbox and learning, 25 seconds:
+   - "Every verified call is saved with the full transcript, structured fields, ticket number, and active-learning signal."
+   - "If an agent corrects a department, location, priority, or category, that becomes training data for future improvement."
+
+10. Closing, 25 seconds:
+   - "So Samvaad improves language access, reduces routine call-center workload, prevents wrong routing, detects unsafe or fake calls, and hands over to humans when needed."
+   - "This prototype runs locally because Sarvam and Twilio credentials are required. If selected, I will deploy it on Google Cloud with secure secrets, storage, and scalable call processing."
 
 ## 90-Second Emergency Backup Video Script
 
