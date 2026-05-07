@@ -1,5 +1,5 @@
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import './index.css';
 import { useCallSocket } from './hooks/useCallSocket';
 import LiveTerminal from './components/LiveTerminal';
@@ -8,16 +8,24 @@ import GrievanceInbox from './components/GrievanceInbox';
 import { BarChart2, Inbox, PhoneCall, Bug } from 'lucide-react';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('overview');
-  const [debugMode, setDebugMode] = useState(false);
+  const [activeTab, setActiveTab] = useState('live');
+  const [debugMode, setDebugMode] = useState(true);
+  const autoOpenedCallRef = useRef(null);
 
   const socketProps = useCallSocket();
 
-  // Automatically switch to Live Terminal if a real call comes in
-  if (socketProps.state !== 'INIT' && activeTab !== 'live' && !debugMode && socketProps.connected) {
-      // Small timeout to prevent render cycle issues
-      setTimeout(() => setActiveTab('live'), 10);
-  }
+  useEffect(() => {
+    const callKey = socketProps.callId || socketProps.state;
+    if (
+      socketProps.connected
+      && socketProps.state !== 'INIT'
+      && callKey
+      && autoOpenedCallRef.current !== callKey
+    ) {
+      autoOpenedCallRef.current = callKey;
+      setActiveTab('live');
+    }
+  }, [socketProps.callId, socketProps.connected, socketProps.state]);
 
   return (
     <div className="h-screen flex bg-[#030304] overflow-hidden font-sans">

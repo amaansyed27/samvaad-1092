@@ -1,6 +1,16 @@
 import { useState, useEffect } from 'react';
 import { CheckCircle, Clock, Search, MapPin, ChevronDown, ChevronUp, AlertCircle, Info, ShieldAlert, ChevronsUpDown } from 'lucide-react';
 
+function MemoryField({ label, value, wide = false }) {
+  const display = value === true ? 'Yes' : value === false ? 'No' : value || 'Not captured';
+  return (
+    <div className={wide ? 'col-span-2' : ''}>
+      <span className="block text-[8px] font-black tracking-widest uppercase text-white/30 mb-1">{label}</span>
+      <span className="text-white/75 font-semibold break-words">{display}</span>
+    </div>
+  );
+}
+
 export default function GrievanceInbox() {
   const [grievances, setGrievances] = useState([]);
   const [search, setSearch] = useState('');
@@ -9,7 +19,7 @@ export default function GrievanceInbox() {
   const [sortDirection, setSortDirection] = useState('desc');
 
   const fetchGrievances = () => {
-    fetch('http://localhost:8000/api/grievances')
+    fetch('/api/grievances')
       .then(r => r.json())
       .then(d => setGrievances(d.records))
       .catch(console.error);
@@ -21,7 +31,7 @@ export default function GrievanceInbox() {
 
   const handleResolve = (e, id) => {
     e.stopPropagation(); // prevent expanding row
-    fetch(`http://localhost:8000/api/grievances/${id}/resolve`, { method: 'POST' })
+    fetch(`/api/grievances/${id}/resolve`, { method: 'POST' })
       .then(() => fetchGrievances());
   };
 
@@ -67,6 +77,19 @@ export default function GrievanceInbox() {
     return sortDirection === 'asc' ? <ChevronUp className="w-3 h-3 text-indigo-400" /> : <ChevronDown className="w-3 h-3 text-indigo-400" />;
   };
 
+  const asObject = (value, fallback = {}) => {
+    if (!value) return fallback;
+    if (typeof value === 'string') {
+      try { return JSON.parse(value); } catch (_) { return fallback; }
+    }
+    return value;
+  };
+
+  const asArray = (value) => {
+    const parsed = asObject(value, []);
+    return Array.isArray(parsed) ? parsed : [];
+  };
+
   return (
     <div className="flex-1 p-8 overflow-y-auto bg-[#030304] custom-scrollbar text-white">
       <div className="flex items-center justify-between mb-8">
@@ -107,6 +130,8 @@ export default function GrievanceInbox() {
         <div className="divide-y divide-white/5">
           {sorted.map(g => {
             const isExpanded = expandedId === g.call_id;
+            const memory = asObject(g.conversation_memory);
+            const conversation = asArray(g.conversation_transcript);
             
             return (
               <div key={g.call_id} className={`transition-colors duration-200 ${isExpanded ? 'bg-white/[0.03]' : 'hover:bg-white/[0.02]'}`}>
@@ -189,6 +214,24 @@ export default function GrievanceInbox() {
                           <div className="absolute top-4 left-4 text-2xl opacity-10">"</div>
                           <p className="pl-6 relative z-10">{g.raw_transcript || "Transcript unavailable."}</p>
                         </div>
+
+                        <div className="p-4 rounded-lg bg-white/[0.02] border border-white/5">
+                          <span className="block text-[9px] font-black tracking-widest uppercase text-white/30 mb-3">Conversation Turn Log</span>
+                          {conversation.length > 0 ? (
+                            <div className="space-y-2 max-h-72 overflow-y-auto pr-1 custom-scrollbar">
+                              {conversation.map((turn, idx) => (
+                                <div key={`${turn.timestamp || idx}-${idx}`} className="grid grid-cols-[76px_1fr] gap-3 text-xs">
+                                  <span className={`font-black uppercase tracking-widest ${turn.role === 'assistant' ? 'text-indigo-300' : 'text-emerald-300'}`}>
+                                    {turn.role || 'turn'}
+                                  </span>
+                                  <span className="text-white/70 leading-relaxed">{turn.text}</span>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-xs text-white/30 italic">Detailed conversation log unavailable for older calls.</p>
+                          )}
+                        </div>
                         
                         <div className="flex gap-4">
                           <div className="flex-1 p-3 rounded-lg bg-white/[0.01] border border-white/5">
@@ -210,6 +253,24 @@ export default function GrievanceInbox() {
                         </div>
                         
                         {/* Key Details */}
+                        <div className="p-4 rounded-lg bg-emerald-500/5 border border-emerald-500/10">
+                          <span className="flex items-center gap-1.5 text-[9px] font-black tracking-widest uppercase text-emerald-400 mb-3">
+                            <Info className="w-3 h-3" /> Ticket Intake Memory
+                          </span>
+                          <div className="grid grid-cols-2 gap-3 text-xs">
+                            <MemoryField label="Issue" value={memory.issue || g.emergency_type} />
+                            <MemoryField label="Department" value={memory.department || g.department_assigned} />
+                            <MemoryField label="Area" value={memory.area || g.location_hint} />
+                            <MemoryField label="Landmark" value={memory.landmark} />
+                            <MemoryField label="Time" value={memory.started_at_or_time} />
+                            <MemoryField label="Frequency" value={memory.frequency} />
+                            <MemoryField label="Tried Before" value={memory.caller_tried} wide />
+                            <MemoryField label="Authority Contacted" value={memory.authority_contacted} />
+                            <MemoryField label="Previous Ticket" value={memory.previous_complaint} />
+                            <MemoryField label="Learning" value={g.learning_feedback_type || (g.agent_edited ? 'agent_edit' : g.caller_confirmed ? 'verified' : '')} />
+                          </div>
+                        </div>
+
                         <div className="p-4 rounded-lg bg-indigo-500/5 border border-indigo-500/10">
                           <span className="flex items-center gap-1.5 text-[9px] font-black tracking-widest uppercase text-indigo-400 mb-3">
                             <Info className="w-3 h-3" /> Extracted Key Details

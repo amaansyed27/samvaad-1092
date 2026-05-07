@@ -9,12 +9,12 @@ export default function AnalyticsOverview() {
   const [isRetraining, setIsRetraining] = useState(false);
 
   const fetchAnalytics = () => {
-    fetch('http://localhost:8000/api/analytics/overview')
+    fetch('/api/analytics/overview')
       .then(r => r.json())
       .then(setData)
       .catch(console.error);
       
-    fetch('http://localhost:8000/api/ml/status')
+    fetch('/api/ml/status')
       .then(r => r.json())
       .then(setMlStatus)
       .catch(console.error);
@@ -30,7 +30,7 @@ export default function AnalyticsOverview() {
   const handleRetrain = async () => {
     setIsRetraining(true);
     try {
-      const res = await fetch('http://localhost:8000/api/ml/retrain', { method: 'POST' });
+      const res = await fetch('/api/ml/retrain', { method: 'POST' });
       const result = await res.json();
       if (result.success) {
         // Short timeout for UX

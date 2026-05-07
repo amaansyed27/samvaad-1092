@@ -7,8 +7,10 @@ import SimulatorPanel from './SimulatorPanel';
 
 export default function LiveTerminal({
   connected, callId, state, events, distress, analysis, restatement, ttsAudio,
-  confidence, piiCount, liveTranscript, languageCode, location, mlRouting,
-  sendTranscript, sendConfirm, sendAudio, sendTakeover, sendAgentEdit, debugMode
+  assistantText, confidence, piiCount, liveTranscript, partialTranscript, languageCode, selectedLanguage,
+  location, mlRouting, slots, latencyMetrics, isAssistantSpeaking,
+  sendTranscript, sendConfirm, sendAudio, sendAudioFrame, sendAudioEnd,
+  sendLanguageSelect, sendTakeover, sendAgentEdit, debugMode
 }) {
   return (
     <div className="flex-1 flex gap-px bg-white/5 overflow-hidden">
@@ -45,7 +47,25 @@ export default function LiveTerminal({
         {/* Call Control Simulator */}
         {debugMode && (
           <div className="flex-1 flex flex-col min-h-0 bg-white/[0.01]">
-            <SimulatorPanel onSendTranscript={sendTranscript} onSendConfirm={sendConfirm} onSendAudio={sendAudio} onSendTakeover={sendTakeover} state={state} restatement={restatement} ttsAudio={ttsAudio} connected={connected} languageCode={languageCode} />
+            <SimulatorPanel
+              onSendTranscript={sendTranscript}
+              onSendConfirm={sendConfirm}
+              onSendAudio={sendAudio}
+              onSendAudioFrame={sendAudioFrame}
+              onSendAudioEnd={sendAudioEnd}
+              onSetLanguage={sendLanguageSelect}
+              onSendTakeover={sendTakeover}
+              state={state}
+              restatement={restatement || assistantText}
+              ttsAudio={ttsAudio}
+              connected={connected}
+              languageCode={languageCode}
+              selectedLanguage={selectedLanguage}
+              partialTranscript={partialTranscript}
+              slots={slots}
+              latencyMetrics={latencyMetrics}
+              isAssistantSpeaking={isAssistantSpeaking}
+            />
           </div>
         )}
         {!debugMode && (
@@ -65,13 +85,13 @@ export default function LiveTerminal({
           <StateTimeline currentState={state} />
         </div>
         <div className="flex-1 min-h-0">
-          <TranscriptPanel events={events} piiCount={piiCount} />
+          <TranscriptPanel events={events} piiCount={piiCount} partialTranscript={partialTranscript} />
         </div>
       </section>
 
       {/* Right: Automated Analysis */}
       <aside className="w-96 flex flex-col bg-[#030304] border-l border-white/5">
-        <AnalysisCard analysis={analysis} mlRouting={mlRouting} sentiment={events.find(e => e.sentiment)?.sentiment} language={languageCode} onAgentEdit={sendAgentEdit} />
+        <AnalysisCard analysis={analysis} mlRouting={mlRouting} sentiment={events.find(e => e.sentiment)?.sentiment} language={languageCode} slots={slots} latencyMetrics={latencyMetrics} onAgentEdit={sendAgentEdit} />
       </aside>
     </div>
   );

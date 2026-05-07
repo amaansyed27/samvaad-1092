@@ -5,19 +5,33 @@ export default function SimulatorPanel({
   onSendTranscript,
   onSendConfirm,
   onSendAudio,
+  onSendAudioFrame,
+  onSendAudioEnd,
+  onSetLanguage,
   onSendTakeover,
   state,
   restatement,
   ttsAudio,
   connected,
   languageCode,
+  selectedLanguage,
+  partialTranscript,
+  slots = {},
+  latencyMetrics = {},
+  isAssistantSpeaking,
 }) {
   const [text, setText] = useState('');
   const [mode, setMode] = useState('mic'); // 'text' | 'mic'
 
   const { isRecording, audioLevel, error: micError, startRecording, stopRecording } = useMicrophone({
+    onAudioFrame: (base64Data, sampleRate) => {
+      if (onSendAudioFrame) onSendAudioFrame(base64Data, sampleRate);
+    },
+    onAudioEnd: (sampleRate) => {
+      if (onSendAudioEnd) onSendAudioEnd(sampleRate);
+    },
     onAudioChunk: (base64Data) => {
-      if (onSendAudio) onSendAudio(base64Data);
+      if (!onSendAudioFrame && onSendAudio) onSendAudio(base64Data);
     },
     chunkIntervalMs: 3000,
   });
@@ -56,8 +70,14 @@ export default function SimulatorPanel({
   };
 
   const isWaiting = state === 'WAIT_FOR_CONFIRM';
+  const isClarifying = Boolean(restatement) && state === 'LISTEN';
   const isTerminal = state === 'VERIFIED' || state === 'HUMAN_TAKEOVER';
   const isActive = !isTerminal && state !== 'INIT';
+  const languages = [
+    { digit: '1', code: 'en-IN', label: 'English' },
+    { digit: '2', code: 'kn-IN', label: 'Kannada' },
+    { digit: '3', code: 'hi-IN', label: 'Hindi' },
+  ];
 
   return (
     <div className="glass-card flex flex-col h-full bg-black/20 border-white/5 shadow-2xl relative overflow-hidden">
@@ -91,9 +111,87 @@ export default function SimulatorPanel({
 
 
       <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar flex flex-col">
+        {!isTerminal && (
+          <div className="p-4 rounded-xl bg-white/[0.02] border border-white/10 flex-shrink-0">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-[10px] font-bold uppercase tracking-widest text-white/40">
+                Caller Language
+              </span>
+              <span className="text-[9px] font-mono text-white/30 uppercase">
+                Press 1 / 2 / 3
+              </span>
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              {languages.map((lang) => (
+                <button
+                  key={lang.code}
+                  onClick={() => onSetLanguage?.(lang.code)}
+                  disabled={!connected}
+                  className={`h-10 rounded-lg border text-[10px] font-black uppercase tracking-widest transition-all ${
+                    selectedLanguage === lang.code
+                      ? 'bg-indigo-500/20 border-indigo-400/50 text-indigo-200'
+                      : 'bg-black/30 border-white/10 text-white/40 hover:text-white/70'
+                  } disabled:opacity-30 disabled:pointer-events-none`}
+                >
+                  {lang.digit} {lang.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="p-4 rounded-xl bg-white/[0.02] border border-white/10 flex-shrink-0 space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-bold uppercase tracking-widest text-white/40">
+              Required Slots
+            </span>
+            <span className="text-[9px] font-mono text-indigo-300 uppercase">
+              {slots.required_slot || 'issue'}
+            </span>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <SlotPill label="Issue" value={slots.issue || 'Pending'} />
+            <SlotPill label="Dept" value={slots.department || 'UNASSIGNED'} />
+            <SlotPill label="Location" value={slots.location || 'Pending'} />
+            <SlotPill label="Specific" value={slots.location_specific ? 'Yes' : 'No'} tone={slots.location_specific ? 'good' : 'warn'} />
+          </div>
+          {partialTranscript && (
+            <p className="text-xs text-white/70 leading-relaxed border-l border-indigo-400/40 pl-3">
+              {partialTranscript}
+            </p>
+          )}
+        </div>
+
+        <div className="p-4 rounded-xl bg-white/[0.02] border border-white/10 flex-shrink-0">
+          <div className="text-[10px] font-bold uppercase tracking-widest text-white/40 mb-3">
+            Latency
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <Metric label="Partial" value={latencyMetrics.stt_first_partial_ms} />
+            <Metric label="Final" value={latencyMetrics.stt_final_ms} />
+            <Metric label="Analysis" value={latencyMetrics.analysis_ms} />
+            <Metric label="TTS" value={latencyMetrics.tts_first_audio_ms} />
+          </div>
+          {isAssistantSpeaking && (
+            <div className="mt-3 text-[10px] uppercase tracking-widest text-emerald-300">
+              Assistant speaking
+            </div>
+          )}
+        </div>
+
+        <div className="p-4 rounded-xl bg-white/[0.02] border border-white/10 flex-shrink-0">
+          <div className="text-[10px] font-bold uppercase tracking-widest text-white/40 mb-3">
+            Judge Demo Script
+          </div>
+          <div className="space-y-2 text-[11px] text-white/55 leading-relaxed">
+            <p><span className="text-white/80 font-bold">English:</span> Power cuts at my house in Whitefield, near Vydehi hospital.</p>
+            <p><span className="text-white/80 font-bold">Hindi:</span> Mere area mein baar baar bijli ja rahi hai, Whitefield main road ke paas.</p>
+            <p><span className="text-white/80 font-bold">Kannada:</span> Whitefield Vydehi hospital hattira current hogide.</p>
+          </div>
+        </div>
         
         {/* Restatement display */}
-        {restatement && isWaiting && (
+        {restatement && (isWaiting || isClarifying) && (
           <div className="p-5 rounded-xl bg-indigo-500/10 border border-indigo-500/20 shadow-inner animate-slide-up flex-shrink-0">
             <div className="flex items-center justify-between mb-3">
               <span className="text-[10px] font-bold uppercase tracking-widest text-indigo-400">
@@ -111,6 +209,7 @@ export default function SimulatorPanel({
             <p className="text-sm text-indigo-100 font-medium leading-relaxed italic border-l-2 border-indigo-500/50 pl-3">
               "{restatement}"
             </p>
+            {isWaiting && (
             <div className="mt-4 flex gap-3">
               <button
                 onClick={() => onSendConfirm(true)}
@@ -137,6 +236,12 @@ export default function SimulatorPanel({
                 ✗ Incorrect
               </button>
             </div>
+            )}
+            {isClarifying && (
+              <p className="mt-3 text-[10px] uppercase tracking-widest text-indigo-300/70">
+                Awaiting caller detail
+              </p>
+            )}
           </div>
         )}
 
@@ -214,7 +319,7 @@ export default function SimulatorPanel({
               </span>
               {isRecording && (
                 <span className="text-[10px] text-red-400/60 uppercase tracking-widest">
-                  Transmitting PCM chunks...
+                  Streaming 16 kHz PCM frames...
                 </span>
               )}
               {micError && (
@@ -269,6 +374,27 @@ export default function SimulatorPanel({
             </div>
           )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+function SlotPill({ label, value, tone }) {
+  const color = tone === 'good' ? '#2dd4a0' : tone === 'warn' ? '#f5a524' : '#8b5cf6';
+  return (
+    <div className="rounded bg-black/30 border border-white/10 px-2 py-2 min-w-0">
+      <div className="text-[8px] font-black uppercase tracking-widest text-white/25">{label}</div>
+      <div className="text-[10px] font-bold uppercase truncate" style={{ color }}>{value}</div>
+    </div>
+  );
+}
+
+function Metric({ label, value }) {
+  return (
+    <div className="rounded bg-black/30 border border-white/10 px-2 py-2">
+      <div className="text-[8px] font-black uppercase tracking-widest text-white/25">{label}</div>
+      <div className="text-[10px] font-mono font-bold text-white/70">
+        {Number.isFinite(value) ? `${Math.round(value)} ms` : '--'}
       </div>
     </div>
   );

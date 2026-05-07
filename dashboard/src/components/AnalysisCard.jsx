@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 
-export default function AnalysisCard({ analysis, mlRouting, sentiment, language, onAgentEdit }) {
+export default function AnalysisCard({ analysis, mlRouting, sentiment, language, slots = {}, latencyMetrics = {}, onAgentEdit }) {
   const [isEditing, setIsEditing] = useState(false);
   const [edits, setEdits] = useState({});
   const [saved, setSaved] = useState(false);
@@ -183,6 +183,34 @@ export default function AnalysisCard({ analysis, mlRouting, sentiment, language,
           </div>
         )}
 
+        {Object.keys(slots || {}).length > 0 && (
+          <div className="p-4 rounded-xl bg-white/[0.02] border border-white/10">
+            <span className="text-[10px] font-bold uppercase tracking-widest text-white/40 block mb-3">
+              Verification Slots
+            </span>
+            <div className="grid grid-cols-2 gap-2">
+              <MiniStat label="Required" value={slots.required_slot || 'issue'} />
+              <MiniStat label="Specific" value={slots.location_specific ? 'yes' : 'no'} />
+              <MiniStat label="Location" value={slots.location || 'pending'} />
+              <MiniStat label="Attempts" value={slots.clarification_count ?? 0} />
+            </div>
+          </div>
+        )}
+
+        {Object.keys(latencyMetrics || {}).length > 0 && (
+          <div className="p-4 rounded-xl bg-white/[0.02] border border-white/10">
+            <span className="text-[10px] font-bold uppercase tracking-widest text-white/40 block mb-3">
+              Turn Latency
+            </span>
+            <div className="grid grid-cols-2 gap-2">
+              <MiniStat label="STT Partial" value={ms(latencyMetrics.stt_first_partial_ms)} />
+              <MiniStat label="STT Final" value={ms(latencyMetrics.stt_final_ms)} />
+              <MiniStat label="Analysis" value={ms(latencyMetrics.analysis_ms)} />
+              <MiniStat label="TTS First" value={ms(latencyMetrics.tts_first_audio_ms)} />
+            </div>
+          </div>
+        )}
+
         {/* Severity selector when editing */}
         {isEditing && (
           <div className="space-y-2 pt-2 border-t border-white/5">
@@ -278,3 +306,15 @@ function EditableField({ label, value, isEditing, isEdited, onChange }) {
   );
 }
 
+function MiniStat({ label, value }) {
+  return (
+    <div className="rounded bg-black/30 border border-white/10 p-2 min-w-0">
+      <div className="text-[8px] font-black uppercase tracking-widest text-white/25">{label}</div>
+      <div className="text-[10px] font-bold uppercase text-white/70 truncate">{value}</div>
+    </div>
+  );
+}
+
+function ms(value) {
+  return Number.isFinite(value) ? `${Math.round(value)} ms` : '--';
+}

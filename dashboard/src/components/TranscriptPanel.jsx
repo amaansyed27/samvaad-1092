@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 
-export default function TranscriptPanel({ events = [], scrubbed = '', piiCount = 0 }) {
+export default function TranscriptPanel({ events = [], scrubbed = '', piiCount = 0, partialTranscript = '' }) {
   const scrollRef = useRef(null);
 
   useEffect(() => {
@@ -32,6 +32,14 @@ export default function TranscriptPanel({ events = [], scrubbed = '', piiCount =
       </div>
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-8 py-6 space-y-4 custom-scrollbar bg-black/20">
+        {partialTranscript && (
+          <div className="p-4 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-100 animate-pulse">
+            <span className="text-[9px] font-black uppercase tracking-widest text-indigo-300 block mb-1">
+              Live Partial
+            </span>
+            <span className="text-sm font-medium">{partialTranscript}</span>
+          </div>
+        )}
         {events.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full gap-4 text-white/10">
              <div className="w-16 h-16 rounded-full border border-white/5 flex items-center justify-center animate-pulse">
@@ -91,6 +99,34 @@ function formatEvent(ev) {
       return <span className="text-white/40">ACOUSTIC PROFILING: <span className="text-white/80">{(ev.distress?.score * 100 || 0).toFixed(0)}% DISTRESS DETECTED</span></span>;
     case 'transcript_received':
       return <span className="text-white/90">"{ev.transcript}" <span className="text-white/20 uppercase text-[8px] ml-2">[{ev.language_code || '??'}]</span></span>;
+    case 'partial_transcript':
+      return <span className="text-indigo-200/80">PARTIAL: "{ev.transcript}" <span className="text-white/20 uppercase text-[8px] ml-2">[{ev.language_code || '??'}]</span></span>;
+    case 'final_transcript':
+      return <span className="text-white/90 font-semibold">FINAL: "{ev.transcript}" <span className="text-white/20 uppercase text-[8px] ml-2">[{ev.language_code || '??'}]</span></span>;
+    case 'slot_update':
+      return <span className="text-amber-200/80">SLOTS: {Object.entries(ev.slots || {}).map(([k, v]) => `${k}=${v}`).join(' | ')}</span>;
+    case 'classification_update':
+      return <span className="text-emerald-300/80">CLASSIFIED: {ev.department || 'UNKNOWN'} / {ev.emergency_type || 'other'} ({((ev.confidence || 0) * 100).toFixed(0)}%)</span>;
+    case 'sentiment_update':
+      return <span className="text-pink-300/80">SENTIMENT: {ev.sentiment || 'unknown'} ({((ev.confidence || 0) * 100).toFixed(0)}%)</span>;
+    case 'clarification_required':
+      return <span className="text-amber-300 font-medium">CLARIFICATION REQUIRED: "{ev.prompt}"</span>;
+    case 'assistant_text':
+      return <span className="text-sky-400 font-medium italic">ASSISTANT: "{ev.text}"</span>;
+    case 'assistant_audio_chunk':
+      return <span className="text-white/35">TTS AUDIO CHUNK: {ev.codec || 'audio'} / {ev.sample_rate || '--'} Hz</span>;
+    case 'audio_activity':
+      return <span className="text-cyan-300/70">AUDIO: {ev.source || 'mic'} {ev.status || 'activity'} {ev.rms ? `(rms ${ev.rms})` : ''}</span>;
+    case 'stt_status':
+      return <span className="text-cyan-200/70">STT: {ev.status || 'status'} {ev.buffered_bytes ? `(${ev.buffered_bytes} bytes)` : ''}</span>;
+    case 'playback_cancel':
+      return <span className="text-red-300/80">BARGE-IN: Assistant playback cancelled</span>;
+    case 'latency_metrics':
+      return <span className="text-white/50">LATENCY: {Object.entries(ev.metrics || {}).map(([k, v]) => `${k}=${Math.round(v)}ms`).join(' | ')}</span>;
+    case 'ivr_menu':
+      return <span className="text-amber-300 font-bold uppercase text-[9px] tracking-widest">IVR MENU: {ev.prompt}</span>;
+    case 'language_selected':
+      return <span className="text-emerald-300 font-bold uppercase text-[9px] tracking-widest">LANGUAGE LOCKED: {ev.language_code} {ev.language ? `(${ev.language})` : ''}</span>;
     case 'restatement':
       return <span className="text-sky-400 font-medium italic">AI RESTATEMENT: "{ev.restatement}"</span>;
     case 'VERIFIED':
