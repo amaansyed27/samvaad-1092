@@ -222,6 +222,29 @@ export default function AnalysisCard({ analysis, mlRouting, sentiment, language,
                 {slots.location_validation_reason}
               </div>
             )}
+            {(slots.location_source || slots.location_confirmed || slots.geo_pin?.lat) && (
+              <div className="mt-3 rounded border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-[10px] text-emerald-100/80 leading-relaxed">
+                Source: {slots.location_source || 'speech'}
+                {slots.location_confirmed ? ' | caller/map confirmed' : ''}
+                {slots.geo_pin?.lat ? ` | pin ${Number(slots.geo_pin.lat).toFixed(5)}, ${Number(slots.geo_pin.lng).toFixed(5)}` : ''}
+              </div>
+            )}
+            {Array.isArray(slots.map_candidates) && slots.map_candidates.length > 0 && (
+              <div className="mt-3 space-y-2">
+                <span className="text-[9px] font-bold uppercase tracking-widest text-white/30">
+                  Map Candidates
+                </span>
+                {slots.map_candidates.slice(0, 3).map((candidate) => (
+                  <div key={`${candidate.name}-${candidate.address}`} className="rounded border border-white/10 bg-black/20 px-3 py-2">
+                    <div className="text-[10px] font-bold text-white/80">{candidate.name}</div>
+                    <div className="text-[9px] text-white/40 leading-relaxed">{candidate.address}</div>
+                    <div className="mt-1 text-[9px] text-amber-300/80">
+                      {Math.round((candidate.confidence || 0) * 100)}% match
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 

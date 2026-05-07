@@ -10,7 +10,7 @@ export default function LiveTerminal({
   assistantText, confidence, piiCount, liveTranscript, partialTranscript, languageCode, selectedLanguage,
   location, mlRouting, slots, latencyMetrics, isAssistantSpeaking,
   sendTranscript, sendConfirm, sendAudio, sendAudioFrame, sendAudioEnd,
-  sendLanguageSelect, sendTakeover, sendAgentEdit, debugMode
+  sendLanguageSelect, sendTakeover, sendAgentEdit, sendLocationPin, debugMode
 }) {
   return (
     <div className="flex-1 flex gap-px bg-white/5 overflow-hidden">
@@ -55,6 +55,7 @@ export default function LiveTerminal({
               onSendAudioEnd={sendAudioEnd}
               onSetLanguage={sendLanguageSelect}
               onSendTakeover={sendTakeover}
+              onSendLocationPin={sendLocationPin}
               state={state}
               restatement={restatement || assistantText}
               ttsAudio={ttsAudio}

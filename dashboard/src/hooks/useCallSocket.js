@@ -308,6 +308,9 @@ export function useCallSocket(url = DEFAULT_WS_URL) {
   const sendCorrection = useCallback((corrections) => {
     send({ type: 'correction', corrections, feedback_type: 'partial_correct' });
   }, [send]);
+  const sendLocationPin = useCallback((pin) => {
+    send({ type: 'location_pin', ...pin });
+  }, [send]);
 
   return {
     connected,
@@ -343,6 +346,7 @@ export function useCallSocket(url = DEFAULT_WS_URL) {
     sendTakeover,
     sendAgentEdit,
     sendCorrection,
+    sendLocationPin,
   };
 }
 

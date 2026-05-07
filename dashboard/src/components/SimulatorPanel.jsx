@@ -9,6 +9,7 @@ export default function SimulatorPanel({
   onSendAudioEnd,
   onSetLanguage,
   onSendTakeover,
+  onSendLocationPin,
   state,
   restatement,
   ttsAudio,
@@ -22,6 +23,7 @@ export default function SimulatorPanel({
 }) {
   const [text, setText] = useState('');
   const [mode, setMode] = useState('mic'); // 'text' | 'mic'
+  const [geoStatus, setGeoStatus] = useState('');
 
   const { isRecording, audioLevel, error: micError, startRecording, stopRecording } = useMicrophone({
     onAudioFrame: (base64Data, sampleRate) => {
@@ -68,6 +70,27 @@ export default function SimulatorPanel({
         console.error('[TTS Replay] Error:', err);
       }
     }
+  };
+
+  const handleShareLocation = () => {
+    if (!navigator.geolocation) {
+      setGeoStatus('Browser location unavailable');
+      return;
+    }
+    setGeoStatus('Requesting map pin...');
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const pin = {
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
+          accuracy_m: Math.round(position.coords.accuracy || 0),
+        };
+        onSendLocationPin?.(pin);
+        setGeoStatus(`Map pin sent (${pin.accuracy_m || '--'} m)`);
+      },
+      (err) => setGeoStatus(err.message || 'Could not read location'),
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 30000 },
+    );
   };
 
   const isWaiting = state === 'WAIT_FOR_CONFIRM';
@@ -155,6 +178,39 @@ export default function SimulatorPanel({
             <SlotPill label="Dept" value={slots.department || 'UNASSIGNED'} />
             <SlotPill label="Location" value={slots.location || 'Pending'} />
             <SlotPill label="Specific" value={slots.location_specific ? 'Yes' : 'No'} tone={slots.location_specific ? 'good' : 'warn'} />
+          </div>
+          <div className="rounded-lg border border-white/10 bg-black/30 p-3 space-y-2">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-[8px] font-black uppercase tracking-widest text-white/25">Geo Check</div>
+                <div className="text-[10px] font-bold text-amber-200/80 truncate">
+                  {slots.location_validation_status || 'missing'}
+                  {Number.isFinite(slots.location_confidence) ? ` | ${Math.round(slots.location_confidence * 100)}%` : ''}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleShareLocation}
+                disabled={!connected || !onSendLocationPin}
+                className="px-3 py-2 rounded-md border border-emerald-400/30 bg-emerald-500/10 text-[9px] font-black uppercase tracking-widest text-emerald-300 disabled:opacity-30"
+              >
+                Send Pin
+              </button>
+            </div>
+            {slots.location_validation_reason && (
+              <p className="text-[10px] text-white/45 leading-relaxed">{slots.location_validation_reason}</p>
+            )}
+            {Array.isArray(slots.map_candidates) && slots.map_candidates.length > 0 && (
+              <div className="space-y-1">
+                {slots.map_candidates.slice(0, 2).map((candidate) => (
+                  <div key={`${candidate.name}-${candidate.address}`} className="text-[10px] text-white/55 leading-relaxed">
+                    <span className="text-white/80 font-bold">{candidate.name}</span>
+                    <span className="text-white/30"> | {Math.round((candidate.confidence || 0) * 100)}%</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {geoStatus && <p className="text-[10px] text-emerald-300/70">{geoStatus}</p>}
           </div>
           {partialTranscript && (
             <p className="text-xs text-white/70 leading-relaxed border-l border-indigo-400/40 pl-3">

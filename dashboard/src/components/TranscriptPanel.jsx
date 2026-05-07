@@ -109,6 +109,8 @@ function formatEvent(ev) {
       return <span className="text-pink-300/80">Caller tone: {ev.sentiment || 'unknown'} ({percent(ev.confidence)} confidence)</span>;
     case 'abuse_guardrail':
       return <AbuseLog ev={ev} />;
+    case 'location_resolution':
+      return <LocationResolutionLog ev={ev} />;
     case 'clarification_required':
       return <span className="text-amber-300 font-medium">Needs caller detail: "{ev.prompt}"</span>;
     case 'assistant_text':
@@ -177,6 +179,24 @@ function ClassificationLog({ ev }) {
         </div>
       )}
       {ev.empathy_note && <div className="text-[10px] text-sky-300/70">Empathy cue: {ev.empathy_note}</div>}
+    </div>
+  );
+}
+
+function LocationResolutionLog({ ev }) {
+  const candidates = ev.candidates || (ev.candidate ? [ev.candidate] : []);
+  const top = candidates[0];
+  return (
+    <div className="space-y-1">
+      <div className="text-emerald-300/90">
+        Location check: {ev.status || 'candidate'}{ev.source ? ` via ${ev.source}` : ''}
+      </div>
+      {ev.reason && <div className="text-[10px] text-white/40">{ev.reason}</div>}
+      {top?.name && (
+        <div className="text-[10px] text-amber-200/80">
+          Candidate: {top.name} ({percent(top.confidence)})
+        </div>
+      )}
     </div>
   );
 }

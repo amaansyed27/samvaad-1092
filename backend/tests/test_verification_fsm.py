@@ -11,6 +11,7 @@ from app.core.verification_fsm import (
     _build_restatement,
     _detect_confirmation_intent,
     _is_specific_location,
+    apply_geo_pin_to_session,
 )
 from app.models import AnalysisResult, CallSession, VerificationState
 
@@ -339,3 +340,43 @@ class TestHackathonGuardrails:
         message = _build_restatement(session)
         assert "ನಾನು ದೃಢೀಕರಿಸುತ್ತೇನೆ" in message
         assert "Let me confirm" not in message
+
+    def test_misheard_landmark_requires_map_confirmation(self, session):
+        data = _build_fast_analysis(
+            session,
+            "Power cuts near Espelad Apartments",
+            0.2,
+        )
+        memory = session.conversation_memory
+        assert data["department"] == "BESCOM"
+        assert session.required_slot == "location_confirm"
+        assert data["needs_clarification"] is True
+        assert memory["location_validation_status"] == "needs_map_confirmation"
+        assert memory["map_candidates"][0]["name"] == "Esplanade Apartments"
+
+    def test_confirmed_map_candidate_verifies_location(self, session):
+        _build_fast_analysis(
+            session,
+            "Power cuts near Espelad Apartments",
+            0.2,
+        )
+        data = _build_fast_analysis(session, "yes that is correct", 0.1)
+        memory = session.conversation_memory
+        assert data["needs_clarification"] is True
+        assert data["needs_clarification"] == (session.required_slot == "started_at_or_time")
+        assert memory["location_validation_status"] == "map_confirmed"
+        assert memory["location_confirmed"] is True
+        assert memory["ticket_ready"] is True
+
+    def test_geo_pin_marks_location_as_pin_verified(self, session):
+        session.conversation_memory = {
+            "issue": "power_outage",
+            "department": "BESCOM",
+        }
+        memory = apply_geo_pin_to_session(
+            session,
+            {"lat": 12.9784, "lng": 77.6408, "accuracy_m": 35},
+        )
+        assert memory["location_validation_status"] == "pin_verified"
+        assert memory["ticket_ready"] is True
+        assert session.call_slots["geo_pin"]["lat"] == 12.9784

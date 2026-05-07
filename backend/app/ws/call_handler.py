@@ -39,7 +39,7 @@ from datetime import datetime, timezone
 from fastapi import WebSocket, WebSocketDisconnect
 
 from app.core.sarvam_bridge import get_stt, get_tts
-from app.core.verification_fsm import VerificationEngine
+from app.core.verification_fsm import VerificationEngine, apply_geo_pin_to_session
 from app.models import CallSession, VerificationState, WSEvent
 from app.core.ml_routing import predict_department
 
@@ -190,6 +190,9 @@ class ConnectionManager:
 
             case "language_select" | "dtmf":
                 await self._handle_language_select(session, msg, call_id)
+
+            case "location_pin":
+                await self._handle_location_pin(session, msg, call_id)
 
             case "start":
                 event = self._engine.start_listening(session)
@@ -568,6 +571,30 @@ class ConnectionManager:
         if not any(getattr(conn, "is_twilio", False) for conn in self._connections.get(call_id, [])):
             await self._stream_assistant_text(call_id, session, _language_lock_prompt(session))
 
+    async def _handle_location_pin(
+        self, session: CallSession, msg: dict, call_id: str
+    ) -> None:
+        """Apply an operator/browser map pin as verified location context."""
+        pin = {
+            "lat": msg.get("lat"),
+            "lng": msg.get("lng"),
+            "accuracy_m": msg.get("accuracy_m") or msg.get("accuracy"),
+            "address": msg.get("address", ""),
+        }
+        memory = apply_geo_pin_to_session(session, pin)
+        await self._broadcast(call_id, {
+            "event": "location_resolution",
+            "source": "map_pin",
+            "geo_pin": memory.get("geo_pin", {}),
+            "candidate": memory.get("map_candidate_selected", {}),
+            "status": memory.get("location_validation_status"),
+            "reason": memory.get("location_validation_reason"),
+            "conversation_memory": memory,
+            "slots": session.call_slots,
+        })
+        await self._broadcast(call_id, {"event": "slot_update", "slots": session.call_slots})
+        await self._persist_session(session)
+
     async def _run_pipeline(
         self, session: CallSession, transcript: str, call_id: str
     ) -> None:
@@ -614,6 +641,16 @@ class ConnectionManager:
                 "conversation_memory": session.conversation_memory,
                 "slots": session.call_slots,
             })
+            if session.call_slots.get("map_candidates") or session.call_slots.get("geo_pin"):
+                await self._broadcast(call_id, {
+                    "event": "location_resolution",
+                    "source": session.call_slots.get("location_source", "speech"),
+                    "status": session.call_slots.get("location_validation_status"),
+                    "reason": session.call_slots.get("location_validation_reason"),
+                    "candidates": session.call_slots.get("map_candidates", []),
+                    "geo_pin": session.call_slots.get("geo_pin", {}),
+                    "slots": session.call_slots,
+                })
         if event.get("slots"):
             await self._broadcast(call_id, {"event": "slot_update", "slots": event["slots"]})
         if event.get("sentiment"):

@@ -34,6 +34,7 @@ from typing import Any
 
 from app.config import settings
 from app.core.acoustic_guardian import get_guardian
+from app.core.location_resolver import candidate_from_geo_pin, resolve_location_candidates
 from app.core.llm_swarm import get_factory
 from app.core.pii_scrubber import get_scrubber
 from app.models import (
@@ -269,7 +270,7 @@ _CORRECTION_CUES = {
 }
 
 _ABUSE_WARNING_SLOT = "abuse_warning"
-_REQUIRED_CLARIFICATION_SLOTS = {"issue", "location", "landmark", "correction", _ABUSE_WARNING_SLOT}
+_REQUIRED_CLARIFICATION_SLOTS = {"issue", "location", "landmark", "location_confirm", "correction", _ABUSE_WARNING_SLOT}
 _OPTIONAL_DETAIL_SLOTS = (
     "started_at_or_time",
     "frequency",
@@ -723,6 +724,11 @@ def _get_conversation_memory(session: CallSession) -> dict[str, Any]:
         "location_confidence": 0.0,
         "location_validation_status": "missing",
         "location_validation_reason": "",
+        "location_source": "speech",
+        "location_confirmed": False,
+        "geo_pin": {},
+        "map_candidates": [],
+        "map_candidate_selected": {},
         "missing_slot": "issue",
         "last_question": "",
     }
@@ -741,6 +747,9 @@ def _update_conversation_memory(
     memory = _get_conversation_memory(session)
     text = " ".join((transcript or "").split())
     lower = text.lower()
+
+    if session.required_slot == "location_confirm" and _detect_confirmation_intent(text) is True:
+        _accept_top_map_candidate(memory)
 
     if emergency_type and emergency_type != "other":
         memory["issue"] = emergency_type
@@ -763,7 +772,22 @@ def _update_conversation_memory(
             else:
                 memory["area"] = location_phrase
 
-    validation = _validate_location(memory.get("landmark") or memory.get("area"), transcript=text)
+    query_location = memory.get("landmark") or memory.get("area")
+    candidates = resolve_location_candidates(
+        query_location or text,
+        area_hint=memory.get("area", ""),
+        geo_pin=memory.get("geo_pin") or None,
+    )
+    memory["map_candidates"] = candidates
+    if candidates and not memory.get("location_confirmed"):
+        top = candidates[0]
+        candidate_confident = top["confidence"] >= 0.72 and not top.get("broad")
+        if candidate_confident and not memory.get("landmark"):
+            memory["landmark"] = top["landmark"]
+            memory["area"] = top["area"] or memory.get("area", "")
+            memory["location_source"] = "map_candidate"
+
+    validation = _validate_location(memory.get("landmark") or memory.get("area"), transcript=text, memory=memory)
     memory["normalized_location"] = validation["normalized"]
     memory["location_confidence"] = validation["confidence"]
     memory["location_validation_status"] = validation["status"]
@@ -791,11 +815,59 @@ def _update_conversation_memory(
 
     usable_location = (
         (bool(memory.get("landmark")) or _is_specific_location(memory.get("area")))
-        and validation["status"] in {"usable", "verified_format"}
+        and validation["status"] in {"usable", "verified_format", "map_confirmed", "pin_verified"}
     )
     memory["ticket_ready"] = bool(memory.get("issue") and memory.get("department") and usable_location)
     session.conversation_memory = memory
     return memory
+
+
+def apply_geo_pin_to_session(session: CallSession, pin: dict[str, Any]) -> dict[str, Any]:
+    """Apply an operator/browser map pin to the conversation memory."""
+    memory = _get_conversation_memory(session)
+    candidate = candidate_from_geo_pin(pin)
+    memory["geo_pin"] = {
+        "lat": candidate.get("lat"),
+        "lng": candidate.get("lng"),
+        "accuracy_m": pin.get("accuracy_m") or pin.get("accuracy") or 0,
+        "address": pin.get("address", ""),
+    }
+    memory["map_candidate_selected"] = candidate
+    memory["map_candidates"] = [candidate]
+    memory["location_source"] = "map_pin"
+    memory["location_confirmed"] = candidate["status"] == "pin_verified"
+    memory["area"] = candidate.get("area") or memory.get("area", "")
+    memory["landmark"] = candidate.get("landmark") or memory.get("landmark", "")
+    memory["normalized_location"] = candidate.get("address") or candidate.get("name") or ""
+    memory["location_confidence"] = candidate.get("confidence", 0.0)
+    memory["location_validation_status"] = candidate["status"]
+    memory["location_validation_reason"] = candidate["reason"]
+    usable_location = candidate["status"] == "pin_verified"
+    memory["ticket_ready"] = bool(memory.get("issue") and memory.get("department") and usable_location)
+    memory["missing_slot"] = "" if usable_location else "location"
+    if usable_location and session.required_slot in {"location", "landmark", "location_confirm"}:
+        session.required_slot = "confirmation" if memory.get("issue") and memory.get("department") else "issue"
+    session.conversation_memory = memory
+    session.call_slots = _build_slot_view(session)
+    return memory
+
+
+def _accept_top_map_candidate(memory: dict[str, Any]) -> None:
+    candidates = memory.get("map_candidates") or []
+    if not candidates:
+        return
+    selected = candidates[0]
+    if selected.get("broad"):
+        return
+    memory["map_candidate_selected"] = selected
+    memory["location_confirmed"] = True
+    memory["location_source"] = selected.get("source", "map_candidate")
+    memory["area"] = selected.get("area") or memory.get("area", "")
+    memory["landmark"] = selected.get("landmark") or selected.get("name") or memory.get("landmark", "")
+    memory["normalized_location"] = selected.get("address") or selected.get("name") or memory.get("normalized_location", "")
+    memory["location_confidence"] = max(float(selected.get("confidence", 0.0)), 0.86)
+    memory["location_validation_status"] = "map_confirmed"
+    memory["location_validation_reason"] = "Caller confirmed the map/location candidate."
 
 
 def _should_ask_optional_detail(session: CallSession, memory: dict[str, Any]) -> bool:
@@ -944,14 +1016,17 @@ def _build_fast_analysis(
     has_issue = _has_issue_signal(transcript, department, emergency_type)
     abuse = _assess_abuse_or_prank(transcript, has_issue)
     memory = _update_conversation_memory(session, transcript, department, emergency_type, sentiment)
+    has_issue = has_issue or bool(memory.get("issue"))
+    if department in {"OTHER", "UNKNOWN", "UNASSIGNED"} and memory.get("department"):
+        department = memory["department"]
     memory["abuse_risk"] = abuse["risk"]
     memory["abuse_action"] = abuse["action"]
     memory["abuse_reason"] = abuse["reason"]
     location = memory.get("landmark") or memory.get("area") or _extract_location_hint(transcript)
-    location_validation = _validate_location(location, transcript=transcript)
+    location_validation = _validate_location(location, transcript=transcript, memory=memory)
     location_specific = (
         (bool(memory.get("landmark")) or _is_specific_location(location))
-        and location_validation["status"] in {"usable", "verified_format"}
+        and location_validation["status"] in {"usable", "verified_format", "map_confirmed", "pin_verified"}
     )
     needs_clarification = False
     key_details = _key_details_from_text(transcript, emergency_type, location)
@@ -972,7 +1047,11 @@ def _build_fast_analysis(
         session.required_slot = "location"
         needs_clarification = True
         key_details.append("Needs caller location")
-    elif location_validation["status"] not in {"usable", "verified_format"}:
+    elif location_validation["status"] == "needs_map_confirmation":
+        session.required_slot = "location_confirm"
+        needs_clarification = True
+        key_details.append(location_validation["reason"])
+    elif location_validation["status"] not in {"usable", "verified_format", "map_confirmed", "pin_verified"}:
         session.required_slot = "landmark"
         needs_clarification = True
         key_details.append(location_validation["reason"])
@@ -1031,7 +1110,10 @@ def _build_slot_view(session: CallSession) -> dict[str, Any]:
         "department": memory.get("department") or (analysis.department if analysis else None) or session.department_assigned,
         "location": location,
         "area": memory.get("area", ""),
-        "location_specific": bool(memory.get("landmark")) or _is_specific_location(location),
+        "location_specific": (
+            (bool(memory.get("landmark")) or _is_specific_location(location))
+            and memory.get("location_validation_status") in {"usable", "verified_format", "map_confirmed", "pin_verified"}
+        ),
         "landmark": memory.get("landmark", ""),
         "started_at_or_time": memory.get("started_at_or_time", ""),
         "frequency": memory.get("frequency", ""),
@@ -1043,6 +1125,11 @@ def _build_slot_view(session: CallSession) -> dict[str, Any]:
         "location_confidence": memory.get("location_confidence", 0.0),
         "location_validation_status": memory.get("location_validation_status", "missing"),
         "location_validation_reason": memory.get("location_validation_reason", ""),
+        "location_source": memory.get("location_source", "speech"),
+        "location_confirmed": memory.get("location_confirmed", False),
+        "geo_pin": memory.get("geo_pin", {}),
+        "map_candidates": memory.get("map_candidates", []),
+        "map_candidate_selected": memory.get("map_candidate_selected", {}),
         "empathy_note": memory.get("empathy_note", ""),
         "priority_reason": memory.get("priority_reason", ""),
         "abuse_risk": memory.get("abuse_risk", "LOW"),
@@ -1393,10 +1480,28 @@ def _looks_like_location(location: str | None) -> bool:
     return 1 <= len(words) <= 5 and any(word[:1].isupper() for word in location.split())
 
 
-def _validate_location(location: str | None, *, transcript: str = "") -> dict[str, Any]:
+def _validate_location(location: str | None, *, transcript: str = "", memory: dict[str, Any] | None = None) -> dict[str, Any]:
     normalized = _normalize_location(location or "")
     lower = normalized.lower()
     transcript_lower = (transcript or "").lower()
+    memory = memory or {}
+
+    if memory.get("location_confirmed") and memory.get("normalized_location"):
+        return {
+            "normalized": memory["normalized_location"],
+            "confidence": max(float(memory.get("location_confidence") or 0.0), 0.86),
+            "status": "map_confirmed",
+            "reason": "Caller confirmed the map/location candidate.",
+        }
+    if memory.get("geo_pin"):
+        status = memory.get("location_validation_status")
+        if status == "pin_verified":
+            return {
+                "normalized": memory.get("normalized_location") or normalized,
+                "confidence": max(float(memory.get("location_confidence") or 0.0), 0.82),
+                "status": "pin_verified",
+                "reason": memory.get("location_validation_reason") or "Caller/operator shared a verified map pin.",
+            }
 
     if not normalized:
         return {
@@ -1416,7 +1521,11 @@ def _validate_location(location: str | None, *, transcript: str = "") -> dict[st
     has_address_number = bool(re.search(r"\b(?:no\.?\s*)?\d+[a-z]?\b", lower))
     has_pin = bool(re.search(r"\b\d{6}\b", lower))
     has_street = any(marker in lower for marker in ("cross", "road", "street", "main", "layout", "block", "phase", "stage", "feet road"))
-    has_area = any(area in lower for area in _BROAD_LOCATION_TERMS if area not in {"area", "city", "district", "airport", "vidhana soudha", "vidhan sabha"})
+    memory_area = str(memory.get("area") or "").lower()
+    has_area = (
+        any(area in lower for area in _BROAD_LOCATION_TERMS if area not in {"area", "city", "district", "airport", "vidhana soudha", "vidhan sabha"})
+        or any(area in memory_area for area in _BROAD_LOCATION_TERMS if area not in {"area", "city", "district", "airport", "vidhana soudha", "vidhan sabha"})
+    )
     has_landmark_marker = any(marker in lower for marker in ("near", "opposite", "beside", "behind", "apartment", "hospital", "school", "temple", "metro", "gate", "tower"))
     is_major_ambiguous = _is_major_ambiguous_location(lower)
 
@@ -1447,6 +1556,14 @@ def _validate_location(location: str | None, *, transcript: str = "") -> dict[st
             "confidence": 0.78,
             "status": "usable",
             "reason": "Location has enough area and landmark detail for ticket intake.",
+        }
+    candidates = memory.get("map_candidates") or []
+    if candidates and candidates[0].get("confidence", 0.0) >= 0.72 and not candidates[0].get("broad"):
+        return {
+            "normalized": candidates[0].get("address") or normalized,
+            "confidence": candidates[0].get("confidence", 0.72),
+            "status": "needs_map_confirmation",
+            "reason": f"Possible map match: {candidates[0].get('name')}. Confirm with caller or use a map pin before dispatch.",
         }
     if has_area and not has_street and not has_landmark_marker:
         return {
@@ -1678,6 +1795,15 @@ def _build_conversational_restatement(
         if language == "kannada":
             return "ನಿಮ್ಮ ಸಮಸ್ಯೆ ಅರ್ಥವಾಗಿದೆ. ತಕ್ಷಣ ಟಿಕೆಟ್ ಮಾಡಲು ಸಹಾಯ ಮಾಡುತ್ತೇನೆ. ಟಿಕೆಟ್‌ನಲ್ಲಿ ಯಾವ ಪ್ರದೇಶ ಮತ್ತು ಹತ್ತಿರದ ಗುರುತು ಹಾಕಲಿ?"
         return "I understand your problem. I will help create a ticket immediately. Which area and nearest landmark should I put on the ticket?"
+
+    if session.required_slot == "location_confirm":
+        candidate = (memory.get("map_candidates") or [{}])[0]
+        place = candidate.get("name") or memory.get("normalized_location") or location
+        if language == "hindi":
+            return f"Mujhe location {place} jaisi sunai di. Kya yahi sahi jagah hai? Agar nahi, area ya map pin bhej dijiye."
+        if language == "kannada":
+            return f"Location {place} anta kelisitu. Idu sariyana jagave? Illandre area athava map pin kodi."
+        return f"I heard the location as {place}. Is that correct? If not, please say the correct landmark or use the map pin."
 
     if session.required_slot == "started_at_or_time":
         if language == "hindi":
