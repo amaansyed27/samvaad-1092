@@ -1,9 +1,14 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 
-const DEFAULT_WS_URL = import.meta.env.VITE_WS_URL
-  || `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/call`;
-const DASHBOARD_WS_URL = import.meta.env.VITE_DASHBOARD_WS_URL
-  || `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/dashboard`;
+function buildDefaultWsUrl(path) {
+  const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
+  const isViteDevServer = ['5173', '5174'].includes(location.port);
+  const host = isViteDevServer ? `${location.hostname}:8000` : location.host;
+  return `${protocol}://${host}${path}`;
+}
+
+const DEFAULT_WS_URL = import.meta.env.VITE_WS_URL || buildDefaultWsUrl('/ws/call');
+const DASHBOARD_WS_URL = import.meta.env.VITE_DASHBOARD_WS_URL || '';
 
 export function useCallSocket(url = DEFAULT_WS_URL) {
   const [connected, setConnected] = useState(false);
@@ -206,7 +211,11 @@ export function useCallSocket(url = DEFAULT_WS_URL) {
   }, [stopPlayback]);
 
   const connect = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN || wsRef.current?.readyState === WebSocket.CONNECTING) return;
+    if (
+      wsRef.current?.readyState === WebSocket.OPEN
+      || wsRef.current?.readyState === WebSocket.CONNECTING
+      || wsRef.current?.isPending
+    ) return;
 
     const timerId = setTimeout(() => {
       const ws = new WebSocket(url);
@@ -224,7 +233,7 @@ export function useCallSocket(url = DEFAULT_WS_URL) {
       };
 
       ws.onerror = (err) => {
-        console.error('[Samvaad WS] Error:', err);
+        console.error(`[Samvaad WS] Error connecting to ${url}:`, err);
       };
 
       ws.onmessage = (msg) => {
@@ -240,7 +249,11 @@ export function useCallSocket(url = DEFAULT_WS_URL) {
   }, [url, handleEvent]);
 
   const connectDashboard = useCallback(() => {
-    if (dashboardWsRef.current?.readyState === WebSocket.OPEN || dashboardWsRef.current?.readyState === WebSocket.CONNECTING) return;
+    if (!DASHBOARD_WS_URL) return;
+    if (
+      dashboardWsRef.current?.readyState === WebSocket.OPEN
+      || dashboardWsRef.current?.readyState === WebSocket.CONNECTING
+    ) return;
 
     const ws = new WebSocket(DASHBOARD_WS_URL);
     dashboardWsRef.current = ws;
@@ -256,7 +269,7 @@ export function useCallSocket(url = DEFAULT_WS_URL) {
       dashboardReconnectTimer.current = setTimeout(connectDashboard, 3000);
     };
     ws.onerror = (err) => {
-      console.error('[Samvaad Dashboard WS] Error:', err);
+      console.warn(`[Samvaad Dashboard WS] Optional observer unavailable at ${DASHBOARD_WS_URL}:`, err);
     };
   }, [handleEvent]);
 
