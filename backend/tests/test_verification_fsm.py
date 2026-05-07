@@ -595,6 +595,43 @@ class TestHackathonGuardrails:
         assert memory["area"] == "Indiranagar"
         assert memory["started_at_or_time"]
 
+    def test_streetlight_with_night_and_location_skips_frequency_loop(self, session):
+        data = _build_fast_analysis(
+            session,
+            "No street lights at Indiranagar Metro Station, Fifth Cross, Esplade Apartments at night",
+            0.2,
+        )
+        memory = session.conversation_memory
+
+        assert data["department"] == "BBMP"
+        assert data["emergency_type"] == "streetlights"
+        assert memory["ticket_ready"] is True
+        assert memory["frequency"] == "repeated"
+        assert session.required_slot == "confirmation"
+        assert data["needs_clarification"] is False
+
+    def test_streetlight_safety_sentiment_survives_location_followup(self, session):
+        _build_fast_analysis(
+            session,
+            "There are no street lights from the metro to my house at night and I feel unsafe",
+            0.2,
+        )
+        assert session.conversation_memory["sentiment"] == "fear"
+        assert session.conversation_memory["urgency"] == "HIGH"
+
+        data = _build_fast_analysis(
+            session,
+            "Indiranagar Metro Station, Fifth Cross, Esplade Apartments",
+            0.2,
+        )
+        memory = session.conversation_memory
+
+        assert memory["sentiment"] == "fear"
+        assert memory["urgency"] == "HIGH"
+        assert memory["ticket_ready"] is True
+        assert session.required_slot == "confirmation"
+        assert data["needs_clarification"] is False
+
     @pytest.mark.asyncio
     async def test_confirmation_question_gets_clean_explanation(self, engine, session):
         engine.start_listening(session)

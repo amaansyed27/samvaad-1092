@@ -909,6 +909,7 @@ def _update_conversation_memory(
         or bool(_extract_structured_location(text))
         or bool(_extract_location_hint(text))
         or (_is_generic_apartment_location(memory.get("landmark")) and bool(_extract_standalone_location(text)))
+        or (memory.get("location_validation_status") == "needs_correction" and bool(_extract_standalone_location(text)))
     )
     if session.required_slot not in {"issue", "location", "landmark", "location_confirm", "service_detail"} and _is_impact_or_time_detail(text):
         should_update_location = False
@@ -957,8 +958,17 @@ def _update_conversation_memory(
     memory["location_validation_status"] = validation["status"]
     memory["location_validation_reason"] = validation["reason"]
 
-    memory["sentiment"] = sentiment
-    memory["urgency"] = "HIGH" if sentiment in {"angry", "fear", "urgent", "frustrated"} else "LOW"
+    previous_sentiment = memory.get("sentiment", "")
+    previous_urgency = memory.get("urgency", "")
+    if previous_sentiment in {"angry", "fear", "urgent", "frustrated"} and sentiment == "calm":
+        memory["sentiment"] = previous_sentiment
+    else:
+        memory["sentiment"] = sentiment
+    memory["urgency"] = (
+        "HIGH"
+        if memory["sentiment"] in {"angry", "fear", "urgent", "frustrated"} or previous_urgency == "HIGH"
+        else "LOW"
+    )
 
     if any(cue in lower for cue in _SKIP_OPTIONAL_CUES):
         memory["skip_optional"] = True
@@ -966,6 +976,8 @@ def _update_conversation_memory(
         memory["currently_happening"] = "yes"
     if any(term in lower for term in ("every night", "daily", "again and again", "many times", "repeated", "too many")):
         memory["frequency"] = _extract_frequency(text)
+    if memory.get("issue") == "streetlights" and _describes_persistent_streetlight_fault(lower):
+        memory["frequency"] = memory.get("frequency") or "repeated"
     if any(term in lower for term in ("since", "morning", "evening", "night", "yesterday", "today", "week", "month", "hour")) and session.required_slot in {"issue", "started_at_or_time", "frequency", "location_confirm", "confirmation"}:
         time_detail = _extract_time_detail(text)
         if time_detail:
@@ -1057,6 +1069,8 @@ def _should_ask_optional_detail(session: CallSession, memory: dict[str, Any]) ->
     if memory.get("skip_optional"):
         return False
     if memory.get("sentiment") in {"angry", "fear", "urgent", "frustrated"}:
+        return False
+    if memory.get("issue") == "streetlights" and (memory.get("started_at_or_time") or memory.get("frequency")):
         return False
     if session.optional_detail_count >= _MAX_OPTIONAL_QUESTIONS:
         return False
@@ -1300,7 +1314,11 @@ def _build_fast_analysis(
     else:
         department = "OTHER"
 
-    emergency_type = _infer_emergency_type(transcript, department)
+    existing_issue = session.conversation_memory.get("issue")
+    if detail_turn and existing_issue and existing_issue != "other":
+        emergency_type = existing_issue
+    else:
+        emergency_type = _infer_emergency_type(transcript, department)
     language = _preferred_language(session, _detect_text_language(transcript))
     sentiment = _sentiment_from_text(transcript, acoustic_score)
     has_issue = _has_issue_signal(transcript, department, emergency_type)
@@ -1983,6 +2001,25 @@ def _looks_like_new_grievance(transcript: str) -> bool:
         "smoke",
     )
     return any(term in text for term in strong_terms)
+
+
+def _describes_persistent_streetlight_fault(text: str) -> bool:
+    lower = (text or "").lower()
+    return any(
+        cue in lower
+        for cue in (
+            "no street light",
+            "no street lights",
+            "street lights are not",
+            "street light is not",
+            "streetlights are not",
+            "streetlight is not",
+            "bulbs are fused",
+            "bulb is fused",
+            "fused off",
+            "not working",
+        )
+    )
 
 
 def _has_streetlight_issue(text: str) -> bool:
