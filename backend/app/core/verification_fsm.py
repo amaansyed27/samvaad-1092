@@ -889,6 +889,7 @@ def _update_conversation_memory(
         session.required_slot in {"issue", "location", "landmark", "location_confirm", "service_detail"}
         or bool(_extract_structured_location(text))
         or bool(_extract_location_hint(text))
+        or (_is_generic_apartment_location(memory.get("landmark")) and bool(_extract_standalone_location(text)))
     )
     if session.required_slot not in {"issue", "location", "landmark", "location_confirm", "service_detail"} and _is_impact_or_time_detail(text):
         should_update_location = False
@@ -2267,6 +2268,14 @@ def _validate_location(location: str | None, *, transcript: str = "", memory: di
             "status": "missing",
             "reason": "Location is missing.",
         }
+    if _is_generic_apartment_location(normalized) and candidates:
+        top = candidates[0]
+        return {
+            "normalized": top.get("address") or normalized,
+            "confidence": top.get("confidence", 0.56),
+            "status": "needs_map_confirmation" if top.get("confidence", 0.0) >= 0.5 else "needs_correction",
+            "reason": f"Possible map match: {top.get('name')}. Confirm with caller or ask for the apartment name.",
+        }
     if any(cue in transcript_lower for cue in _FAKE_LOCATION_CUES):
         return {
             "normalized": normalized,
@@ -2494,6 +2503,19 @@ def _is_non_location_phrase(text: str | None) -> bool:
     if any(term in lower for term in complaint_terms):
         return True
     return False
+
+
+def _is_generic_apartment_location(location: str | None) -> bool:
+    lower = (location or "").lower().strip(" .,:;")
+    return lower in {
+        "apartment",
+        "the apartment",
+        "my apartment",
+        "my house, the apartment",
+        "my home, the apartment",
+        "house, the apartment",
+        "home, the apartment",
+    }
 
 
 def _trim_detail_text(text: str) -> str:
@@ -2876,7 +2898,9 @@ def _display_location(memory: dict[str, Any], fallback_location: str = "") -> st
     if selected.get("landmark") and selected.get("area"):
         return f"{selected['landmark']}, {selected['area']}"
     candidates = memory.get("map_candidates") or []
-    if candidates and candidates[0].get("confidence", 0) >= 0.8 and not candidates[0].get("broad"):
+    generic_apartment = _is_generic_apartment_location(memory.get("landmark"))
+    candidate_threshold = 0.5 if generic_apartment else 0.8
+    if candidates and candidates[0].get("confidence", 0) >= candidate_threshold and not candidates[0].get("broad"):
         top = candidates[0]
         landmark = top.get("landmark") or top.get("name")
         area = top.get("area")
@@ -2914,6 +2938,8 @@ def _build_dispatch_message(session: CallSession) -> str:
     analysis = session.analysis_result
     language = _preferred_language(session, analysis.language_detected if analysis else None)
     memory = _get_conversation_memory(session)
+    issue = _issue_label(memory.get("issue") or (analysis.emergency_type if analysis else None), language)
+    location = _display_location(memory, (analysis.location_hint if analysis else "") or "")
     department = (
         memory.get("line_department")
         or (analysis.line_department if analysis else None)
@@ -2928,7 +2954,8 @@ def _build_dispatch_message(session: CallSession) -> str:
         return f"आपका टिकट {session.ticket_id} {department} के साथ दर्ज हो गया है. हम आगे की कार्रवाई के लिए इसे भेज रहे हैं. जरूरत पड़ी तो प्रतिनिधि इसी नंबर पर संपर्क करेगा. स्थिति जानने के लिए 1092 पर यही नंबर बताएं. धन्यवाद."
     if language == "kannada":
         return f"ನಿಮ್ಮ ಟಿಕೆಟ್ {session.ticket_id} {department} ಗೆ ದಾಖಲಾಗಿದೆ. ಮುಂದಿನ ಕ್ರಮಕ್ಕೆ ಕಳುಹಿಸುತ್ತಿದ್ದೇವೆ. ಹೆಚ್ಚಿನ ವಿವರ ಬೇಕಾದರೆ ಪ್ರತಿನಿಧಿ ಇದೇ ಸಂಖ್ಯೆಗೆ ಸಂಪರ್ಕಿಸುತ್ತಾರೆ. ಸ್ಥಿತಿ ತಿಳಿಯಲು 1092 ಗೆ ಕರೆ ಮಾಡಿ ಈ ಸಂಖ್ಯೆಯನ್ನು ಹೇಳಿ. ಧನ್ಯವಾದಗಳು."
-    return f"Your grievance has been registered with {department}. Your ticket number is {session.ticket_id}. We will send it to the concerned line official for action, and if more details are needed, a representative will contact you on this same number. Use this ticket number to check status or quote it if a representative contacts you.{helpline_note} The ticket details have also been sent by SMS. Thank you for calling Karnataka 1092."
+    location_phrase = f" at {location}" if location else ""
+    return f"Your grievance for {issue}{location_phrase} has been registered with {department}. Your ticket number is {session.ticket_id}. We will send it to the concerned line official for action, and if more details are needed, a representative will contact you on this same number. Use this ticket number to check status or quote it if a representative contacts you.{helpline_note} The ticket details have also been sent by SMS. Thank you for calling Karnataka 1092."
 
 
 def _build_human_takeover_message(session: CallSession, reason: str) -> str:

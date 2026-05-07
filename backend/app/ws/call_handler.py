@@ -32,6 +32,7 @@ import audioop
 import io
 import json
 import logging
+import re
 import time
 import wave
 from datetime import datetime, timezone
@@ -826,9 +827,10 @@ class ConnectionManager:
             lang = _tts_language(session)
             try:
                 if self.has_twilio_connection(call_id):
+                    spoken_text = _twilio_spoken_text(text)
                     chunk = await asyncio.wait_for(
                         self._tts.synthesise(
-                            text,
+                            spoken_text,
                             target_language=lang,
                             output_audio_codec="wav",
                             speech_sample_rate=24000,
@@ -1103,6 +1105,25 @@ def _estimate_audio_seconds(audio_b64: str, codec: str, sample_rate: int) -> flo
         return len(raw) / float(2 * (sample_rate or 24000))
     except Exception:
         return 0.0
+
+
+def _twilio_spoken_text(text: str) -> str:
+    """Keep PSTN closing prompts short enough for reliable TTS/playout."""
+    cleaned = " ".join((text or "").split())
+    ticket_match = re.search(r"\b1092-[A-Z0-9]+\b", cleaned)
+    department_match = re.search(r"registered with ([^.]+)\.", cleaned)
+    detail_match = re.search(r"Your grievance for (.+?) has been registered with", cleaned)
+    helpline_match = re.search(r"contact ([0-9/]+)\.", cleaned)
+    if ticket_match and department_match:
+        detail = f" for {detail_match.group(1)}" if detail_match else ""
+        helpline = f" For urgent direct support, call {helpline_match.group(1)}." if helpline_match else ""
+        return (
+            f"Your grievance{detail} has been registered with {department_match.group(1)}. "
+            f"Your ticket number is {ticket_match.group(0)}. "
+            "A representative may contact you on this number if more details are needed. "
+            f"Quote this ticket number to check status.{helpline} Thank you for calling Karnataka 1092."
+        )
+    return cleaned[:420]
 
 
 def _tts_language(session: CallSession) -> str:
