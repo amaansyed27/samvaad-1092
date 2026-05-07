@@ -108,6 +108,12 @@ class AnalysisResult(BaseModel):
     key_details: list[str] = Field(default_factory=list)
     cultural_context: str | None = None
     semantic_distress_score: float = 0.0
+    empathy_note: str | None = None
+    priority_reason: str | None = None
+    abuse_risk: str | None = None
+    abuse_score: float = 0.0
+    abuse_action: str | None = None
+    abuse_reason: str | None = None
     needs_clarification: bool = False
     requires_immediate_takeover: bool = False
     confidence: float = 0.0

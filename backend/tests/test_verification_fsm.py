@@ -228,6 +228,25 @@ class TestHackathonGuardrails:
         assert memory["sentiment"] == "angry"
         assert memory["caller_tried"].startswith("We have tried contacting BESCOM")
 
+    def test_priority_uses_described_impact_not_only_issue_type(self, session):
+        text = (
+            "Power cuts at 45 fifth cross near Espelad Apartments Indiranagar. "
+            "It has been happening for the past week with 7 continuous cuts in 3 days, "
+            "each cut lasted over 3 hours, and BESCOM was rude when we called."
+        )
+        data = _build_fast_analysis(session, text, 0.2)
+        assert data["department"] == "BESCOM"
+        assert data["priority"] == "HIGH"
+        assert "long service interruption" in data["priority_reason"]
+        assert data["empathy_note"]
+
+    def test_dummy_prank_call_gets_guardrail_warning(self, session):
+        data = _build_fast_analysis(session, "this is a prank test call haha no issue", 0.1)
+        assert data["abuse_action"] in {"WARN", "BLACKLIST_REVIEW"}
+        assert data["needs_clarification"] is True
+        assert session.required_slot == "abuse_warning"
+        assert "prank" in data["abuse_reason"]
+
     def test_hindi_language_lock_uses_hindi_prompts(self, engine, session):
         engine.set_language(session, "hi-IN")
         session.conversation_memory = {

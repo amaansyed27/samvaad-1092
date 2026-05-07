@@ -239,7 +239,8 @@ _CORRECTION_CUES = {
     "instead",
 }
 
-_REQUIRED_CLARIFICATION_SLOTS = {"issue", "location", "landmark", "correction"}
+_ABUSE_WARNING_SLOT = "abuse_warning"
+_REQUIRED_CLARIFICATION_SLOTS = {"issue", "location", "landmark", "correction", _ABUSE_WARNING_SLOT}
 _OPTIONAL_DETAIL_SLOTS = (
     "started_at_or_time",
     "frequency",
@@ -258,6 +259,44 @@ _SKIP_OPTIONAL_CUES = (
     "enough",
     "immediately",
     "right now",
+)
+
+_PRANK_OR_DUMMY_TERMS = (
+    "prank",
+    "dummy",
+    "fake complaint",
+    "timepass",
+    "just testing",
+    "testing testing",
+    "test call",
+    "nothing happened",
+    "no issue",
+    "no problem",
+    "asdf",
+    "blah blah",
+)
+_ABUSIVE_TERMS = (
+    "idiot",
+    "stupid",
+    "shut up",
+    "bloody",
+    "useless",
+)
+_URGENCY_TERMS = (
+    "urgent",
+    "immediately",
+    "right now",
+    "emergency",
+    "danger",
+    "unsafe",
+    "sparking",
+    "fire",
+    "shock",
+    "wire down",
+    "hospital",
+    "school",
+    "elderly",
+    "children",
 )
 
 
@@ -645,6 +684,11 @@ def _get_conversation_memory(session: CallSession) -> dict[str, Any]:
         "sentiment": "",
         "ticket_ready": False,
         "skip_optional": False,
+        "abuse_risk": "LOW",
+        "abuse_action": "ALLOW",
+        "abuse_reason": "",
+        "priority_reason": "",
+        "empathy_note": "",
         "missing_slot": "issue",
         "last_question": "",
     }
@@ -840,13 +884,21 @@ def _build_fast_analysis(
     language = _preferred_language(session, _detect_text_language(transcript))
     sentiment = _sentiment_from_text(transcript, acoustic_score)
     has_issue = _has_issue_signal(transcript, department, emergency_type)
+    abuse = _assess_abuse_or_prank(transcript, has_issue)
     memory = _update_conversation_memory(session, transcript, department, emergency_type, sentiment)
+    memory["abuse_risk"] = abuse["risk"]
+    memory["abuse_action"] = abuse["action"]
+    memory["abuse_reason"] = abuse["reason"]
     location = memory.get("landmark") or memory.get("area") or _extract_location_hint(transcript)
     location_specific = bool(memory.get("landmark")) or _is_specific_location(location)
     needs_clarification = False
     key_details = _key_details_from_text(transcript, emergency_type, location)
 
-    if not has_issue:
+    if abuse["action"] in {"WARN", "BLACKLIST_REVIEW"} and (not has_issue or department == "OTHER" or emergency_type == "other"):
+        session.required_slot = _ABUSE_WARNING_SLOT
+        needs_clarification = True
+        key_details.append(f"Abuse/spam guardrail: {abuse['reason']}")
+    elif not has_issue:
         session.required_slot = "issue"
         needs_clarification = True
         key_details.append("Needs grievance details")
@@ -872,13 +924,14 @@ def _build_fast_analysis(
     memory["missing_slot"] = session.required_slot if needs_clarification else ""
     session.conversation_memory = memory
 
-    semantic_distress = max(
-        min(acoustic_score, 0.85),
-        0.75 if sentiment in {"angry", "fear", "urgent"} else 0.35,
-    )
-    requires_takeover = acoustic_score >= 0.88 or sentiment == "fear"
-    severity = "high" if semantic_distress >= 0.7 else "medium" if semantic_distress >= 0.45 else "low"
-    priority = "HIGH" if severity == "high" else "MEDIUM" if severity == "medium" else "LOW"
+    priority_data = _score_priority(transcript, sentiment, acoustic_score, memory, emergency_type, abuse)
+    semantic_distress = priority_data["semantic_distress"]
+    severity = priority_data["severity"]
+    priority = priority_data["priority"]
+    requires_takeover = sentiment == "fear" or priority_data["requires_takeover"]
+    memory["priority_reason"] = priority_data["reason"]
+    memory["empathy_note"] = _build_empathy_note(sentiment, priority, memory, abuse)
+    session.conversation_memory = memory
 
     return {
         "emergency_type": emergency_type,
@@ -891,6 +944,12 @@ def _build_fast_analysis(
         "key_details": key_details,
         "cultural_context": _cultural_context_from_text(transcript),
         "semantic_distress_score": semantic_distress,
+        "empathy_note": memory["empathy_note"],
+        "priority_reason": memory["priority_reason"],
+        "abuse_risk": abuse["risk"],
+        "abuse_score": abuse["score"],
+        "abuse_action": abuse["action"],
+        "abuse_reason": abuse["reason"],
         "needs_clarification": needs_clarification,
         "requires_immediate_takeover": requires_takeover,
         "confidence": 0.74 if needs_clarification else 0.88,
@@ -914,6 +973,11 @@ def _build_slot_view(session: CallSession) -> dict[str, Any]:
         "caller_tried": memory.get("caller_tried", ""),
         "authority_contacted": memory.get("authority_contacted", ""),
         "previous_complaint": memory.get("previous_complaint", ""),
+        "empathy_note": memory.get("empathy_note", ""),
+        "priority_reason": memory.get("priority_reason", ""),
+        "abuse_risk": memory.get("abuse_risk", "LOW"),
+        "abuse_action": memory.get("abuse_action", "ALLOW"),
+        "abuse_reason": memory.get("abuse_reason", ""),
         "ticket_ready": bool(memory.get("ticket_ready")),
         "urgency": (analysis.priority if analysis else None) or session.priority,
         "sentiment": (analysis.sentiment if analysis else None) or session.sentiment,
@@ -1042,6 +1106,140 @@ def _has_issue_signal(transcript: str, department: str, emergency_type: str) -> 
         "road",
     )
     return any(term in text for term in issue_terms)
+
+
+def _assess_abuse_or_prank(transcript: str, has_issue: bool) -> dict[str, Any]:
+    text = " ".join((transcript or "").lower().split())
+    score = 0.0
+    reasons: list[str] = []
+
+    if not text:
+        return {"score": 0.0, "risk": "LOW", "action": "ALLOW", "reason": ""}
+    if any(term in text for term in _PRANK_OR_DUMMY_TERMS):
+        score += 0.55
+        reasons.append("dummy/prank wording")
+    if any(term in text for term in _ABUSIVE_TERMS):
+        score += 0.35
+        reasons.append("abusive language")
+    if len(text.split()) <= 2 and not has_issue:
+        score += 0.25
+        reasons.append("too little grievance detail")
+    if re.fullmatch(r"[\W\d_]+", text):
+        score += 0.5
+        reasons.append("non-speech/noise-like content")
+    if "haha" in text or "lol" in text:
+        score += 0.3
+        reasons.append("laughter/prank cue")
+    if has_issue:
+        score = max(0.0, score - 0.35)
+
+    score = min(score, 1.0)
+    if score >= 0.75:
+        risk = "HIGH"
+        action = "BLACKLIST_REVIEW"
+    elif score >= 0.35:
+        risk = "MEDIUM"
+        action = "WARN"
+    else:
+        risk = "LOW"
+        action = "ALLOW"
+
+    return {
+        "score": score,
+        "risk": risk,
+        "action": action,
+        "reason": ", ".join(reasons),
+    }
+
+
+def _score_priority(
+    transcript: str,
+    sentiment: str,
+    acoustic_score: float,
+    memory: dict[str, Any],
+    emergency_type: str,
+    abuse: dict[str, Any],
+) -> dict[str, Any]:
+    text = (transcript or "").lower()
+    score = 0.18
+    reasons: list[str] = []
+
+    if abuse.get("action") == "BLACKLIST_REVIEW" and not memory.get("ticket_ready"):
+        return {
+            "semantic_distress": 0.15,
+            "severity": "low",
+            "priority": "LOW",
+            "requires_takeover": False,
+            "reason": "Potential prank/spam call; do not assign civic priority until a real grievance is stated.",
+        }
+
+    acoustic_component = min(max(acoustic_score, 0.0), 0.85) * 0.35
+    score += acoustic_component
+    if acoustic_score >= 0.65:
+        reasons.append("high acoustic distress")
+
+    sentiment_boosts = {
+        "fear": 0.45,
+        "urgent": 0.35,
+        "angry": 0.28,
+        "frustrated": 0.22,
+        "confused": 0.12,
+        "calm": 0.0,
+    }
+    boost = sentiment_boosts.get(sentiment, 0.0)
+    score += boost
+    if boost:
+        reasons.append(f"caller sounds {sentiment}")
+
+    if any(term in text for term in _URGENCY_TERMS):
+        score += 0.25
+        reasons.append("urgent/safety wording")
+    if any(term in text for term in ("past week", "for the past week", "many times", "again and again", "repeated", "continuous")):
+        score += 0.18
+        reasons.append("repeated or long-running issue")
+    if re.search(r"\b(?:over|more than|above)\s+\d+\s+hours?\b", text) or re.search(r"\b\d+\s+hours?\b", text):
+        score += 0.14
+        reasons.append("long service interruption")
+    if re.search(r"\b\d+\s+(?:continuous\s+)?cuts?\b", text):
+        score += 0.12
+        reasons.append("multiple outages reported")
+    if memory.get("authority_contacted") or memory.get("caller_tried"):
+        score += 0.1
+        reasons.append("caller already tried prior escalation")
+    if emergency_type in {"fire", "gas_leak"}:
+        score += 0.5
+        reasons.append("life-safety category")
+
+    score = min(score, 1.0)
+    if score >= 0.72:
+        priority = "HIGH"
+        severity = "high"
+    elif score >= 0.42:
+        priority = "MEDIUM"
+        severity = "medium"
+    else:
+        priority = "LOW"
+        severity = "low"
+
+    return {
+        "semantic_distress": score,
+        "severity": severity,
+        "priority": priority,
+        "requires_takeover": score >= 0.92 or sentiment == "fear",
+        "reason": "; ".join(reasons) or "Routine civic intake based on current details.",
+    }
+
+
+def _build_empathy_note(sentiment: str, priority: str, memory: dict[str, Any], abuse: dict[str, Any]) -> str:
+    if abuse.get("action") == "BLACKLIST_REVIEW":
+        return "Possible prank/spam call. Warn once and send to supervisor review before any blacklist action."
+    if sentiment in {"angry", "frustrated"}:
+        return "Acknowledge frustration and reassure the caller that their previous difficulty is being recorded."
+    if sentiment in {"fear", "urgent"} or priority == "HIGH":
+        return "Use a calm urgent tone, reassure the caller, and avoid asking optional questions."
+    if memory.get("ticket_ready"):
+        return "Acknowledge the issue and move toward verification without making the caller repeat details."
+    return "Acknowledge the caller first, then ask for one missing detail."
 
 
 def _extract_location_hint(transcript: str) -> str:
@@ -1278,6 +1476,13 @@ def _build_conversational_restatement(
             return "ಕರ್ನಾಟಕ 1092 ಗೆ ಸ್ವಾಗತ. ನಾನು ನಿಮಗೆ ಸಹಾಯ ಮಾಡುತ್ತೇನೆ. ದಯವಿಟ್ಟು ನಿಮ್ಮ ದೂರು ಹೇಳಿ."
         return "Welcome to Karnataka 1092. I will help you. Please tell me what happened."
 
+    if session.required_slot == _ABUSE_WARNING_SLOT:
+        if language == "hindi":
+            return "Yeh helpline asli nagarik shikayaton ke liye hai. Agar aapko sach mein madad chahiye, kripya samasya aur location saaf batayein."
+        if language == "kannada":
+            return "Ee helpline nija civic doorugalige. Sahaya bekaadare, dayavittu samasya mattu location annu spashtavagi heli."
+        return "This helpline is for genuine civic grievances. If you need help, please clearly state the issue and location."
+
     if session.required_slot in {"location", "landmark"}:
         if language == "hindi":
             return "मैं आपकी समस्या समझ गई. मैं तुरंत टिकट बनाने में मदद करूंगी. टिकट में कौन सा क्षेत्र और नजदीकी लैंडमार्क डालूं?"
@@ -1330,7 +1535,8 @@ def _build_conversational_restatement(
             return f"मैं पुष्टि कर रही हूं: {location} में {issue}.{detail} मैं इसे {department} को भेजूंगी. क्या यह सही है?"
         if language == "kannada":
             return f"ನಾನು ದೃಢೀಕರಿಸುತ್ತೇನೆ: {location} ನಲ್ಲಿ {issue}.{detail} ಇದನ್ನು {department} ಗೆ ಕಳುಹಿಸುತ್ತೇನೆ. ಇದು ಸರಿಯೇ?"
-        return f"Let me confirm: {issue} at {location}.{detail} I will route this to {department}. Is that correct?"
+        prefix = "I understand this has been frustrating. " if memory.get("sentiment") in {"angry", "frustrated"} else ""
+        return f"{prefix}Let me confirm: {issue} at {location}.{detail} I will route this to {department}. Is that correct?"
 
     return ""
 

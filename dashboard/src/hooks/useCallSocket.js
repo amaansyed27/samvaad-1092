@@ -38,6 +38,7 @@ export function useCallSocket(url = DEFAULT_WS_URL) {
   const nextAudioTimeRef = useRef(0);
   const activeSourcesRef = useRef([]);
   const seenEventKeysRef = useRef(new Map());
+  const lastLogEventRef = useRef({});
 
   const stopPlayback = useCallback(() => {
     activeSourcesRef.current.forEach((source) => {
@@ -61,7 +62,9 @@ export function useCallSocket(url = DEFAULT_WS_URL) {
       }
     }
 
-    setEvents((prev) => [...prev.slice(-99), data]);
+    if (shouldAppendToLog(data, lastLogEventRef)) {
+      setEvents((prev) => [...prev.slice(-99), data]);
+    }
 
     if (data.call_id) {
       setCallId(data.call_id);
@@ -385,6 +388,44 @@ function buildEventKey(data) {
   const audio = data.audio ? `${data.codec || ''}:${data.sample_rate || ''}:${data.audio.length}:${data.audio.slice(0, 48)}` : '';
   const status = data.status || data.state || '';
   return [callId, event, timestamp, status, text, turn, audio].join('|');
+}
+
+function shouldAppendToLog(data, lastLogEventRef) {
+  const event = data.event || '';
+  const now = Date.now();
+
+  if (event === 'audio_processed') {
+    const score = Number(data.distress?.score || 0);
+    const previous = lastLogEventRef.current.audio_processed || { at: 0, score: -1, level: '' };
+    const level = distressBand(score);
+    if (now - previous.at < 1600 && Math.abs(score - previous.score) < 0.18 && previous.level === level) {
+      return false;
+    }
+    lastLogEventRef.current.audio_processed = { at: now, score, level };
+    return true;
+  }
+
+  if (event === 'assistant_audio_chunk') {
+    const previous = lastLogEventRef.current.assistant_audio_chunk || 0;
+    if (now - previous < 2500) return false;
+    lastLogEventRef.current.assistant_audio_chunk = now;
+    return true;
+  }
+
+  if (event === 'stt_status' && ['audio_end_received', 'rest_fallback_started'].includes(data.status)) {
+    const key = `${event}:${data.status}`;
+    const previous = lastLogEventRef.current[key] || 0;
+    if (now - previous < 600) return false;
+    lastLogEventRef.current[key] = now;
+  }
+
+  return true;
+}
+
+function distressBand(score) {
+  if (score >= 0.75) return 'high';
+  if (score >= 0.45) return 'elevated';
+  return 'low';
 }
 
 function getAudioContext(audioCtxRef, sampleRate) {

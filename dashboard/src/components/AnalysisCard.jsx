@@ -183,6 +183,27 @@ export default function AnalysisCard({ analysis, mlRouting, sentiment, language,
           </div>
         )}
 
+        {(analysis.priority_reason || analysis.empathy_note || analysis.abuse_action) && (
+          <div className="p-4 rounded-xl bg-white/[0.02] border border-white/10 space-y-3">
+            <span className="text-[10px] font-bold uppercase tracking-widest text-white/40 block">
+              Operator Guidance
+            </span>
+            {analysis.priority_reason && (
+              <GuidanceRow label="Priority basis" value={analysis.priority_reason} tone="amber" />
+            )}
+            {analysis.empathy_note && (
+              <GuidanceRow label="Empathy cue" value={analysis.empathy_note} tone="sky" />
+            )}
+            {analysis.abuse_action && analysis.abuse_action !== 'ALLOW' && (
+              <GuidanceRow
+                label={`Spam policy: ${analysis.abuse_action}`}
+                value={`${analysis.abuse_risk || 'UNKNOWN'} risk (${Math.round((analysis.abuse_score || 0) * 100)}%). ${analysis.abuse_reason || 'Review before ticketing or blacklist action.'}`}
+                tone="red"
+              />
+            )}
+          </div>
+        )}
+
         {Object.keys(slots || {}).length > 0 && (
           <div className="p-4 rounded-xl bg-white/[0.02] border border-white/10">
             <span className="text-[10px] font-bold uppercase tracking-widest text-white/40 block mb-3">
@@ -311,6 +332,20 @@ function MiniStat({ label, value }) {
     <div className="rounded bg-black/30 border border-white/10 p-2 min-w-0">
       <div className="text-[8px] font-black uppercase tracking-widest text-white/25">{label}</div>
       <div className="text-[10px] font-bold uppercase text-white/70 truncate">{value}</div>
+    </div>
+  );
+}
+
+function GuidanceRow({ label, value, tone }) {
+  const colors = {
+    amber: 'text-amber-200 border-amber-500/20 bg-amber-500/5',
+    sky: 'text-sky-200 border-sky-500/20 bg-sky-500/5',
+    red: 'text-red-200 border-red-500/20 bg-red-500/5',
+  };
+  return (
+    <div className={`rounded border px-3 py-2 ${colors[tone] || colors.sky}`}>
+      <div className="text-[8px] font-black uppercase tracking-widest opacity-60">{label}</div>
+      <div className="text-[11px] leading-relaxed font-medium mt-1">{value}</div>
     </div>
   );
 }

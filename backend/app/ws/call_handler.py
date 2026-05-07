@@ -595,8 +595,20 @@ class ConnectionManager:
                 "analysis": event["analysis"],
                 "department": event["analysis"].get("department"),
                 "emergency_type": event["analysis"].get("emergency_type"),
+                "priority": event["analysis"].get("priority"),
+                "severity": event["analysis"].get("severity"),
+                "priority_reason": event["analysis"].get("priority_reason"),
+                "empathy_note": event["analysis"].get("empathy_note"),
                 "confidence": event.get("confidence"),
             })
+            if event["analysis"].get("abuse_action") and event["analysis"].get("abuse_action") != "ALLOW":
+                await self._broadcast(call_id, {
+                    "event": "abuse_guardrail",
+                    "risk": event["analysis"].get("abuse_risk"),
+                    "score": event["analysis"].get("abuse_score"),
+                    "action": event["analysis"].get("abuse_action"),
+                    "reason": event["analysis"].get("abuse_reason"),
+                })
             await self._broadcast(call_id, {
                 "event": "conversation_memory_update",
                 "conversation_memory": session.conversation_memory,
