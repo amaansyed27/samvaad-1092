@@ -440,6 +440,17 @@ class VerificationEngine:
             if direct_intent is not None:
                 return await self.confirm(session, direct_intent)
 
+            if _is_confirmation_clarification_question(transcript):
+                message = _build_confirmation_explanation(session)
+                session.restated_summary = message
+                return {
+                    "event": "clarification_required",
+                    "state": session.state,
+                    "prompt": message,
+                    "assistant_message": message,
+                    "slots": _build_slot_view(session),
+                }
+
             # Automated confirmation check
             try:
                 conf_text, _ = await self._factory.cascade_generate(
@@ -729,6 +740,7 @@ def _get_conversation_memory(session: CallSession) -> dict[str, Any]:
         "geo_pin": {},
         "map_candidates": [],
         "map_candidate_selected": {},
+        "location_needs_candidate_confirmation": False,
         "missing_slot": "issue",
         "last_question": "",
     }
@@ -759,7 +771,7 @@ def _update_conversation_memory(
     location = _extract_location_hint(text)
     if location:
         if _looks_like_location(location) and _is_specific_location(location):
-            memory["landmark"] = location
+            memory["landmark"] = _clean_stored_location(location)
             memory["area"] = _area_from_location(location) or _area_from_location(text) or memory.get("area", "")
         elif _looks_like_location(location) and location.lower().strip(" .,:;") not in {"my house", "my home", "home", "house"}:
             memory["area"] = location
@@ -767,7 +779,7 @@ def _update_conversation_memory(
         location_phrase = _extract_standalone_location(text)
         if location_phrase:
             if _is_specific_location(location_phrase):
-                memory["landmark"] = location_phrase
+                memory["landmark"] = _clean_stored_location(location_phrase)
                 memory["area"] = _area_from_location(location_phrase) or memory.get("area", "")
             else:
                 memory["area"] = location_phrase
@@ -779,13 +791,20 @@ def _update_conversation_memory(
         geo_pin=memory.get("geo_pin") or None,
     )
     memory["map_candidates"] = candidates
+    memory["location_needs_candidate_confirmation"] = False
     if candidates and not memory.get("location_confirmed"):
         top = candidates[0]
         candidate_confident = top["confidence"] >= 0.72 and not top.get("broad")
-        if candidate_confident and not memory.get("landmark"):
-            memory["landmark"] = top["landmark"]
-            memory["area"] = top["area"] or memory.get("area", "")
-            memory["location_source"] = "map_candidate"
+        if candidate_confident:
+            exact_candidate = _is_exact_candidate_mention(query_location or text, top)
+            if exact_candidate:
+                if _is_broad_area(memory.get("area")) and top.get("area"):
+                    memory["area"] = top["area"]
+                if not memory.get("landmark") or _location_contains_non_location_tail(memory.get("landmark", "")):
+                    memory["landmark"] = top["landmark"]
+                memory["location_source"] = "map_candidate"
+            elif not _has_strong_location_context(query_location or text, memory.get("area", "")):
+                memory["location_needs_candidate_confirmation"] = True
 
     validation = _validate_location(memory.get("landmark") or memory.get("area"), transcript=text, memory=memory)
     memory["normalized_location"] = validation["normalized"]
@@ -863,11 +882,12 @@ def _accept_top_map_candidate(memory: dict[str, Any]) -> None:
     memory["location_confirmed"] = True
     memory["location_source"] = selected.get("source", "map_candidate")
     memory["area"] = selected.get("area") or memory.get("area", "")
-    memory["landmark"] = selected.get("landmark") or selected.get("name") or memory.get("landmark", "")
+    memory["landmark"] = _clean_stored_location(selected.get("landmark") or selected.get("name") or memory.get("landmark", ""))
     memory["normalized_location"] = selected.get("address") or selected.get("name") or memory.get("normalized_location", "")
     memory["location_confidence"] = max(float(selected.get("confidence", 0.0)), 0.86)
     memory["location_validation_status"] = "map_confirmed"
     memory["location_validation_reason"] = "Caller confirmed the map/location candidate."
+    memory["location_needs_candidate_confirmation"] = False
 
 
 def _should_ask_optional_detail(session: CallSession, memory: dict[str, Any]) -> bool:
@@ -1130,6 +1150,7 @@ def _build_slot_view(session: CallSession) -> dict[str, Any]:
         "geo_pin": memory.get("geo_pin", {}),
         "map_candidates": memory.get("map_candidates", []),
         "map_candidate_selected": memory.get("map_candidate_selected", {}),
+        "location_needs_candidate_confirmation": memory.get("location_needs_candidate_confirmation", False),
         "empathy_note": memory.get("empathy_note", ""),
         "priority_reason": memory.get("priority_reason", ""),
         "abuse_risk": memory.get("abuse_risk", "LOW"),
@@ -1502,6 +1523,14 @@ def _validate_location(location: str | None, *, transcript: str = "", memory: di
                 "status": "pin_verified",
                 "reason": memory.get("location_validation_reason") or "Caller/operator shared a verified map pin.",
             }
+    candidates = memory.get("map_candidates") or []
+    if memory.get("location_needs_candidate_confirmation") and candidates:
+        return {
+            "normalized": candidates[0].get("address") or normalized,
+            "confidence": candidates[0].get("confidence", 0.72),
+            "status": "needs_map_confirmation",
+            "reason": f"Possible map match: {candidates[0].get('name')}. Confirm with caller or use a map pin before dispatch.",
+        }
 
     if not normalized:
         return {
@@ -1518,7 +1547,8 @@ def _validate_location(location: str | None, *, transcript: str = "", memory: di
             "reason": "Caller indicated the location may be fake or a test address.",
         }
 
-    has_address_number = bool(re.search(r"\b(?:no\.?\s*)?\d+[a-z]?\b", lower))
+    without_road_width = re.sub(r"\b\d+\s*feet\s+road\b", "feet road", lower)
+    has_address_number = bool(re.search(r"\b(?:no\.?\s*)?\d+[a-z]?\b", without_road_width))
     has_pin = bool(re.search(r"\b\d{6}\b", lower))
     has_street = any(marker in lower for marker in ("cross", "road", "street", "main", "layout", "block", "phase", "stage", "feet road"))
     memory_area = str(memory.get("area") or "").lower()
@@ -1557,7 +1587,6 @@ def _validate_location(location: str | None, *, transcript: str = "", memory: di
             "status": "usable",
             "reason": "Location has enough area and landmark detail for ticket intake.",
         }
-    candidates = memory.get("map_candidates") or []
     if candidates and candidates[0].get("confidence", 0.0) >= 0.72 and not candidates[0].get("broad"):
         return {
             "normalized": candidates[0].get("address") or normalized,
@@ -1582,10 +1611,64 @@ def _validate_location(location: str | None, *, transcript: str = "", memory: di
 
 def _normalize_location(location: str) -> str:
     cleaned = " ".join((location or "").replace("Landmark:", " Landmark:").split()).strip(" .,:;")
+    cleaned = _clean_stored_location(cleaned)
     cleaned = re.sub(r"\bNo\s+", "No. ", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\b(\d+)(st|nd|rd|th)\b", lambda m: f"{m.group(1)}{m.group(2).lower()}", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\s*,\s*", ", ", cleaned)
     return cleaned
+
+
+def _clean_stored_location(location: str) -> str:
+    cleaned = " ".join((location or "").split()).strip(" .,:;")
+    cleaned = re.split(
+        r"\b(?:it occurs|it happens|it has been|we have been|we are experiencing|we have experienced|we faced|we had|over the past|for the past|once we had|it's been|it is very|this is very)\b",
+        cleaned,
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0].strip(" .,:;")
+    return cleaned
+
+
+def _location_contains_non_location_tail(location: str) -> bool:
+    lower = (location or "").lower()
+    return any(
+        cue in lower
+        for cue in (
+            "it occurs",
+            "it happens",
+            "for the past",
+            "over the past",
+            "we have been",
+            "we are experiencing",
+            "it's been",
+        )
+    )
+
+
+def _is_exact_candidate_mention(query: str, candidate: dict[str, Any]) -> bool:
+    lower = (query or "").lower()
+    exact_terms = {
+        str(candidate.get("name") or "").lower(),
+        str(candidate.get("landmark") or "").lower(),
+    }
+    exact_terms = {term for term in exact_terms if term}
+    return any(term and term in lower for term in exact_terms)
+
+
+def _has_strong_location_context(location: str, area: str = "") -> bool:
+    lower = (location or "").lower()
+    area_lower = (area or "").lower()
+    has_street = any(marker in lower for marker in ("cross", "road", "street", "main", "layout", "block", "phase", "stage", "feet road"))
+    has_area = bool(area_lower and not _is_broad_area(area_lower)) or any(
+        known in lower for known in ("indiranagar", "whitefield", "koramangala", "jayanagar", "hebbal", "yelahanka", "marathahalli", "rajajinagar")
+    )
+    has_landmark_marker = any(marker in lower for marker in ("near", "opposite", "beside", "behind", "apartment", "hospital", "school", "temple", "metro", "gate", "tower"))
+    return has_area and (has_street or has_landmark_marker)
+
+
+def _is_broad_area(area: str | None) -> bool:
+    lower = (area or "").lower().strip(" .,:;")
+    return lower in {"", "bengaluru", "bangalore", "city", "area", "district"}
 
 
 def _is_major_ambiguous_location(lower: str) -> bool:
@@ -1723,6 +1806,24 @@ def _detect_confirmation_intent(text: str) -> bool | None:
     return None
 
 
+def _is_confirmation_clarification_question(text: str) -> bool:
+    lower = " ".join((text or "").lower().split())
+    if not lower:
+        return False
+    return any(
+        cue in lower
+        for cue in (
+            "what do you mean",
+            "what does that mean",
+            "i don't understand",
+            "i do not understand",
+            "not clear",
+            "why are you saying",
+            "what is",
+        )
+    )
+
+
 def _contains_token(text: str, token: str) -> bool:
     if token.isascii():
         return bool(re.search(rf"\b{re.escape(token)}\b", text))
@@ -1772,7 +1873,7 @@ def _build_conversational_restatement(
 ) -> str:
     memory = _get_conversation_memory(session)
     department = memory.get("department") or fallback_department or "the concerned department"
-    location = memory.get("landmark") or memory.get("area") or fallback_location
+    location = _display_location(memory, fallback_location)
     issue = _issue_label(memory.get("issue"), language) if memory.get("issue") else fallback_issue
 
     if session.required_slot == "issue":
@@ -1899,6 +2000,45 @@ def _build_restatement(session: CallSession) -> str:
     if language == "kannada":
         return f"{location} ನಲ್ಲಿ {issue} ಬಗ್ಗೆ {department} ಗೆ ಟಿಕೆಟ್ ದಾಖಲಿಸುತ್ತಿದ್ದೇನೆ. ಇದು ಸರಿಯೇ?"
     return f"I am logging a ticket with {department} for {issue} at {location}. Is this correct?"
+
+
+def _display_location(memory: dict[str, Any], fallback_location: str = "") -> str:
+    selected = memory.get("map_candidate_selected") or {}
+    if selected.get("landmark") and selected.get("area"):
+        return f"{selected['landmark']}, {selected['area']}"
+    candidates = memory.get("map_candidates") or []
+    if candidates and candidates[0].get("confidence", 0) >= 0.8 and not candidates[0].get("broad"):
+        top = candidates[0]
+        landmark = top.get("landmark") or top.get("name")
+        area = top.get("area")
+        if landmark and area:
+            return f"{landmark}, {area}"
+        if top.get("address"):
+            return top["address"]
+    landmark = _clean_stored_location(memory.get("landmark") or "")
+    area = memory.get("area") or ""
+    if landmark and area and area.lower() not in landmark.lower() and not _is_broad_area(area):
+        return f"{landmark}, {area}"
+    return landmark or area or fallback_location
+
+
+def _build_confirmation_explanation(session: CallSession) -> str:
+    analysis = session.analysis_result
+    memory = _get_conversation_memory(session)
+    language = _preferred_language(session, analysis.language_detected if analysis else None)
+    department = memory.get("department") or (analysis.department if analysis else None) or session.department_assigned
+    issue = _issue_label(memory.get("issue") or (analysis.emergency_type if analysis else None), language)
+    location = _display_location(memory, (analysis.location_hint if analysis else "") or "")
+    time_detail = memory.get("started_at_or_time") or memory.get("frequency")
+
+    if language == "hindi":
+        detail = f" समस्या {time_detail} से चल रही है." if time_detail else ""
+        return f"Maaf kijiye, mera matlab hai: {location} par {issue}.{detail} Main ise {department} ko bhejungi. Kya yeh sahi hai?"
+    if language == "kannada":
+        detail = f" Idu {time_detail} inda aguttide." if time_detail else ""
+        return f"Kshamisi, nanna artha: {location} nalli {issue}.{detail} Idannu {department} ge kaluhisuttene. Idu sariyagideya?"
+    detail = f" It has been happening {time_detail}." if time_detail else ""
+    return f"Sorry, I meant: repeated power cuts at {location}.{detail} I will send this to {department}. Is that correct?"
 
 
 def _build_dispatch_message(session: CallSession) -> str:

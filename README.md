@@ -27,6 +27,7 @@ Detailed documentation has been separated into the following modules:
 - [**Machine Learning & AI**](docs/ml_models.md): Deep dive into the Active Learning loop, the Scikit-Learn routing, and the Acoustic Guardian.
 - [**Theory & Philosophy**](docs/theory.md): The core design philosophies (Sovereign Privacy, Acoustic Superiority, Agent-in-the-Loop).
 - [**Testing Guide**](docs/testing_guide.md): Step-by-step scenarios to verify hackathon requirements.
+- [**Demo Test Scenarios**](docs/demo_test_scenarios.md): Pre-Twilio browser debug scripts, edge cases, and expected dashboard signals.
 
 ---
 

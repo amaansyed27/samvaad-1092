@@ -607,6 +607,10 @@ class ConnectionManager:
             if event.get("event") == "VERIFIED":
                 await self._stream_assistant_text(call_id, session, event.get("dispatch_message", ""))
                 await self._persist_session(session)
+            elif event.get("assistant_message"):
+                await self._stream_assistant_text(call_id, session, event["assistant_message"])
+                if event.get("slots"):
+                    await self._broadcast(call_id, {"event": "slot_update", "slots": event["slots"]})
             return
 
         # SCRUB (PII redaction)

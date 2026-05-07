@@ -417,3 +417,36 @@ class TestHackathonGuardrails:
         assert candidates[0]["source"] == "nominatim"
         assert candidates[0]["name"] == "Dynamic Ward Office"
         assert candidates[0]["area"] == "HSR Layout"
+
+    def test_optional_time_answer_does_not_pollute_landmark(self, session):
+        _build_fast_analysis(
+            session,
+            "Power cuts at Esplanade Apartments on 100 Feet Road",
+            0.2,
+        )
+        data = _build_fast_analysis(
+            session,
+            "It occurs for the past 2 weeks and over the past 3 days continuously",
+            0.2,
+        )
+        memory = session.conversation_memory
+        assert data["department"] == "BESCOM"
+        assert "It occurs" not in memory["landmark"]
+        assert memory["area"] == "Indiranagar"
+        assert memory["started_at_or_time"]
+
+    @pytest.mark.asyncio
+    async def test_confirmation_question_gets_clean_explanation(self, engine, session):
+        engine.start_listening(session)
+        data = _build_fast_analysis(
+            session,
+            "Power cuts at Esplanade Apartments on 100 Feet Road for the past 2 weeks",
+            0.2,
+        )
+        session.analysis_result = AnalysisResult(**data)
+        session.state = VerificationState.WAIT_FOR_CONFIRM.value
+        session.required_slot = "confirmation"
+        event = await engine.receive_transcript(session, "What do you mean by it occurs?")
+        assert event["event"] == "clarification_required"
+        assert "Sorry, I meant" in event["assistant_message"]
+        assert "It occurs" not in event["assistant_message"]
